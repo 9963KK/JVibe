@@ -70,6 +70,11 @@ type FooterData = {
 	getExtensionStatuses(): ReadonlyMap<string, string>;
 };
 
+type WelcomeStatusSnapshot = {
+	branch?: string;
+	mcp?: string;
+};
+
 function getMcpStatus(footerData: FooterData): string | undefined {
 	const mcpStatus = Array.from(footerData.getExtensionStatuses().values()).find((status) => status.includes("MCP:"));
 	if (!mcpStatus) return undefined;
@@ -354,7 +359,14 @@ function buildConversationHeader(ctx: ExtensionContext) {
 }
 
 class JVibeWelcomeEditor extends CustomEditor {
-	constructor(tui: TUI, editorTheme: EditorTheme, keybindings: KeybindingsManager, private readonly ctx: ExtensionContext) {
+	constructor(
+		tui: TUI,
+		editorTheme: EditorTheme,
+		keybindings: KeybindingsManager,
+		private readonly ctx: ExtensionContext,
+		private readonly runtime: ExtensionAPI,
+		private readonly getStatusSnapshot: () => WelcomeStatusSnapshot,
+	) {
 		super(tui, editorTheme, keybindings, {
 			autocompleteMaxVisible: 8,
 			paddingX: 0,
@@ -391,42 +403,101 @@ class JVibeWelcomeEditor extends CustomEditor {
 		];
 	}
 
+	private renderStatusPanel(width: number): string[] {
+		const innerWidth = Math.max(18, width - 2);
+		const snapshot = this.getStatusSnapshot();
+		const model = truncateToWidth(this.ctx.model?.id ?? "unknown", Math.max(10, innerWidth - 9), "...");
+		const tools = formatTools(this.runtime)?.replace(/^tools\s+/, "") ?? "0";
+		const mcp = stripAnsi(snapshot.mcp?.replace(/^mcp\s+/, "") || "auto");
+		const branch = stripAnsi(snapshot.branch || "unknown");
+		const project = shortPath(this.ctx.cwd, Math.max(10, innerWidth - 9));
+		const rows: Array<[string, string]> = [
+			["project", project],
+			["branch", branch],
+			["model", model],
+			["context", formatContextUsage(this.ctx).replace(/^ctx:\s*/, "")],
+			["tools", tools],
+			["mcp", mcp],
+			["mode", "auto"],
+		];
+		const border = (text: string) => ansiRgb("#E4E8EC", text);
+		const label = (text: string) => ansiRgb("#9AA2AB", text);
+		const value = (text: string) => ansiRgb("#252A31", text);
+		const line = (content: string) => {
+			const trimmed = truncateToWidth(content, innerWidth, "...");
+			const padding = " ".repeat(Math.max(0, innerWidth - visibleWidth(trimmed)));
+			return `${border("│")}${trimmed}${padding}${border("│")}`;
+		};
+
+		return [
+			border(`╭${"─".repeat(innerWidth)}╮`),
+			line(` ${bold(ansiRgb("#00C8D7", "SESSION"))}`),
+			line(""),
+			...rows.map(([key, item]) => line(` ${label(key.padEnd(7))} ${value(item)}`)),
+			line(""),
+			line(` ${label("flow".padEnd(7))} ${ansiRgb("#00C8D7", "P")} -> ${ansiRgb("#00C8D7", "B")} -> ${ansiRgb("#00C8D7", "T")} -> ${ansiRgb("#00C8D7", "R")}`),
+			border(`╰${"─".repeat(innerWidth)}╯`),
+		];
+	}
+
+	private composeColumns(left: string[], right: string[], width: number, gap: number): string[] {
+		const contentWidth = width + gap + visibleWidth(stripAnsi(right[0] ?? ""));
+		const leftPad = Math.max(0, Math.floor((this.tui.terminal.columns - contentWidth) / 2));
+		const rowCount = Math.max(left.length, right.length);
+		return Array.from({ length: rowCount }, (_, index) => {
+			const leftLine = left[index] ?? "";
+			const rightLine = right[index] ?? "";
+			const leftPadding = " ".repeat(Math.max(0, width - visibleWidth(leftLine)));
+			return `${" ".repeat(leftPad)}${leftLine}${leftPadding}${" ".repeat(gap)}${rightLine}`;
+		});
+	}
+
 	render(width: number): string[] {
 		if (this.hasConversation()) return super.render(width);
 
 		const columns = Math.max(40, width);
 		const rows = Math.max(18, this.tui.terminal.rows);
-		const boxWidth = Math.min(Math.max(52, Math.floor(columns * 0.56)), Math.max(30, columns - 10));
-		const editorLines = centerBlock(this.renderInputBox(boxWidth), columns);
-		const title = centerLine(bold(ansiRgb("#00C8D7", "JVibe")), columns);
-		const subtitle = centerLine(ansiRgb("#6F7782", "Personal coding agent workbench"), columns);
-		const hints = centerLine(`${ansiRgb("#00C8D7", "tab")} ${ansiRgb("#6F7782", "agents")}   ${bold("/")} ${ansiRgb("#6F7782", "commands")}   ${bold("!")} ${ansiRgb("#6F7782", "bash")}`, columns);
-		const contentHeight = 5 + editorLines.length;
+		const showPanel = columns >= 112;
+		const panelWidth = showPanel ? Math.min(36, Math.max(30, Math.floor(columns * 0.22))) : 0;
+		const gap = showPanel ? 5 : 0;
+		const maxMainWidth = showPanel ? columns - panelWidth - gap - 8 : columns - 10;
+		const boxWidth = Math.min(Math.max(52, Math.floor(columns * 0.52)), Math.max(30, maxMainWidth));
+		const mainLines = [
+			centerLine(bold(ansiRgb("#00C8D7", "JVibe")), boxWidth),
+			centerLine(ansiRgb("#6F7782", "Personal coding agent workbench"), boxWidth),
+			"",
+			...this.renderInputBox(boxWidth),
+			"",
+			centerLine(`${ansiRgb("#00C8D7", "tab")} ${ansiRgb("#6F7782", "agents")}   ${bold("/")} ${ansiRgb("#6F7782", "commands")}   ${bold("!")} ${ansiRgb("#6F7782", "bash")}`, boxWidth),
+		];
+		const contentLines = showPanel
+			? this.composeColumns(mainLines, this.renderStatusPanel(panelWidth), boxWidth, gap)
+			: centerBlock(mainLines, columns);
+		const contentHeight = contentLines.length;
 		const topSpacer = Math.max(2, Math.floor((rows - contentHeight - 2) * 0.36));
 
 		return [
 			...emptyLines(topSpacer),
-			title,
-			subtitle,
-			"",
-			...editorLines,
-			"",
-			hints,
+			...contentLines,
 		];
 	}
 }
 
-function buildMinimalFooter(ctx: ExtensionContext, runtime: ExtensionAPI) {
+function buildMinimalFooter(ctx: ExtensionContext, runtime: ExtensionAPI, statusSnapshot: WelcomeStatusSnapshot) {
 	return (_tui: unknown, theme: Theme, footerData: FooterData): Component => {
 		return {
 			invalidate() {},
 			render(width: number): string[] {
+				statusSnapshot.branch = stripAnsi(footerData.getGitBranch() ?? "");
+				statusSnapshot.mcp = stripAnsi(getMcpStatus(footerData) ?? "");
+				if (!hasVisibleConversation(ctx) && width >= 112) return [];
+
 				const compact = width < 90;
 				const project = shortPath(ctx.cwd, compact ? 24 : 36);
-				const branch = footerData.getGitBranch();
+				const branch = statusSnapshot.branch;
 				const model = truncateToWidth(ctx.model?.id ?? "unknown", compact ? 18 : 30, "...");
 				const tools = formatTools(runtime);
-				const mcp = getMcpStatus(footerData);
+				const mcp = statusSnapshot.mcp;
 				const parts = [
 					theme.bold(theme.fg("accent", "jvibe")),
 					theme.bold(project),
@@ -445,6 +516,7 @@ function buildMinimalFooter(ctx: ExtensionContext, runtime: ExtensionAPI) {
 
 export default function jvibeKernel(runtime: ExtensionAPI) {
 	installConversationRenderers();
+	const statusSnapshot: WelcomeStatusSnapshot = {};
 
 	runtime.on("session_start", (_event, ctx) => {
 		if (!ctx.hasUI) return;
@@ -454,8 +526,8 @@ export default function jvibeKernel(runtime: ExtensionAPI) {
 		ctx.ui.setTheme(JVIBE_THEME_NAME);
 		ctx.ui.setTitle("JVibe");
 		ctx.ui.setHeader(buildConversationHeader(ctx));
-		ctx.ui.setEditorComponent((tui, editorTheme, keybindings) => new JVibeWelcomeEditor(tui, editorTheme, keybindings, ctx));
-		ctx.ui.setFooter(buildMinimalFooter(ctx, runtime));
+		ctx.ui.setEditorComponent((tui, editorTheme, keybindings) => new JVibeWelcomeEditor(tui, editorTheme, keybindings, ctx, runtime, () => statusSnapshot));
+		ctx.ui.setFooter(buildMinimalFooter(ctx, runtime, statusSnapshot));
 		ctx.ui.setStatus("jvibe", "auto");
 		ctx.ui.setStatus("roles", undefined);
 		ctx.ui.setWorkingMessage("Working");
