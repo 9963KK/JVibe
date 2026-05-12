@@ -81,6 +81,52 @@ function getMcpStatus(footerData: FooterData): string | undefined {
 	return mcpStatus.replace(/^MCP:\s*/i, "mcp ");
 }
 
+function renderSessionPanel(ctx: ExtensionContext, runtime: ExtensionAPI, snapshot: WelcomeStatusSnapshot, width: number): string[] {
+	const innerWidth = Math.max(18, width - 2);
+	const model = truncateToWidth(ctx.model?.id ?? "unknown", Math.max(10, innerWidth - 9), "...");
+	const tools = formatTools(runtime)?.replace(/^tools\s+/, "") ?? "0";
+	const mcp = stripAnsi(snapshot.mcp?.replace(/^mcp\s+/, "") || "auto");
+	const branch = stripAnsi(snapshot.branch || "unknown");
+	const project = shortPath(ctx.cwd, Math.max(10, innerWidth - 9));
+	const rows: Array<[string, string]> = [
+		["project", project],
+		["branch", branch],
+		["model", model],
+		["context", formatContextUsage(ctx).replace(/^ctx:\s*/, "")],
+		["tools", tools],
+		["mcp", mcp],
+		["mode", "auto"],
+	];
+	const border = (text: string) => ansiRgb("#E4E8EC", text);
+	const label = (text: string) => ansiRgb("#9AA2AB", text);
+	const value = (text: string) => ansiRgb("#252A31", text);
+	const line = (content: string) => {
+		const trimmed = truncateToWidth(content, innerWidth, "...");
+		const padding = " ".repeat(Math.max(0, innerWidth - visibleWidth(trimmed)));
+		return `${border("│")}${trimmed}${padding}${border("│")}`;
+	};
+
+	return [
+		border(`╭${"─".repeat(innerWidth)}╮`),
+		line(` ${bold(ansiRgb("#00C8D7", "SESSION"))}`),
+		line(""),
+		...rows.map(([key, item]) => line(` ${label(key.padEnd(7))} ${value(item)}`)),
+		line(""),
+		line(` ${label("flow".padEnd(7))} ${ansiRgb("#00C8D7", "P")} -> ${ansiRgb("#00C8D7", "B")} -> ${ansiRgb("#00C8D7", "T")} -> ${ansiRgb("#00C8D7", "R")}`),
+		border(`╰${"─".repeat(innerWidth)}╯`),
+	];
+}
+
+function composeHeaderColumns(left: string[], right: string[], leftWidth: number, gap: number): string[] {
+	const rowCount = Math.max(left.length, right.length);
+	return Array.from({ length: rowCount }, (_, index) => {
+		const leftLine = left[index] ?? "";
+		const rightLine = right[index] ?? "";
+		const leftPadding = " ".repeat(Math.max(0, leftWidth - visibleWidth(leftLine)));
+		return `${leftLine}${leftPadding}${" ".repeat(gap)}${rightLine}`;
+	});
+}
+
 function oneLine(parts: string[], width: number, separator: string): string {
 	const visibleSeparatorWidth = visibleWidth(separator);
 	const result: string[] = [];
@@ -331,7 +377,7 @@ function installConversationRenderers(): void {
 	}
 }
 
-function buildConversationHeader(ctx: ExtensionContext) {
+function buildConversationHeader(ctx: ExtensionContext, runtime: ExtensionAPI, getStatusSnapshot: () => WelcomeStatusSnapshot) {
 	return (_tui: TUI, theme: Theme): Component => ({
 		invalidate() {},
 		render(width: number): string[] {
@@ -348,6 +394,20 @@ function buildConversationHeader(ctx: ExtensionContext) {
 			].join(theme.fg("dim", "  ·  "));
 			const status = visibleWidth(fullStatus) + 2 <= width ? fullStatus : compactStatus;
 			const padded = ` ${status} `;
+			if (width >= 112) {
+				const panelWidth = Math.min(36, Math.max(30, Math.floor(width * 0.22)));
+				const gap = 5;
+				const leftWidth = Math.max(48, width - panelWidth - gap);
+				const panel = renderSessionPanel(ctx, runtime, getStatusSnapshot(), panelWidth);
+				const left = [
+					"",
+					theme.fg("borderMuted", "─".repeat(leftWidth)),
+					truncateToWidth(padded, leftWidth, "..."),
+					theme.fg("borderMuted", "─".repeat(leftWidth)),
+				];
+				return composeHeaderColumns(left, panel, leftWidth, gap);
+			}
+
 			return [
 				"",
 				theme.fg("borderMuted", "─".repeat(width)),
@@ -404,40 +464,7 @@ class JVibeWelcomeEditor extends CustomEditor {
 	}
 
 	private renderStatusPanel(width: number): string[] {
-		const innerWidth = Math.max(18, width - 2);
-		const snapshot = this.getStatusSnapshot();
-		const model = truncateToWidth(this.ctx.model?.id ?? "unknown", Math.max(10, innerWidth - 9), "...");
-		const tools = formatTools(this.runtime)?.replace(/^tools\s+/, "") ?? "0";
-		const mcp = stripAnsi(snapshot.mcp?.replace(/^mcp\s+/, "") || "auto");
-		const branch = stripAnsi(snapshot.branch || "unknown");
-		const project = shortPath(this.ctx.cwd, Math.max(10, innerWidth - 9));
-		const rows: Array<[string, string]> = [
-			["project", project],
-			["branch", branch],
-			["model", model],
-			["context", formatContextUsage(this.ctx).replace(/^ctx:\s*/, "")],
-			["tools", tools],
-			["mcp", mcp],
-			["mode", "auto"],
-		];
-		const border = (text: string) => ansiRgb("#E4E8EC", text);
-		const label = (text: string) => ansiRgb("#9AA2AB", text);
-		const value = (text: string) => ansiRgb("#252A31", text);
-		const line = (content: string) => {
-			const trimmed = truncateToWidth(content, innerWidth, "...");
-			const padding = " ".repeat(Math.max(0, innerWidth - visibleWidth(trimmed)));
-			return `${border("│")}${trimmed}${padding}${border("│")}`;
-		};
-
-		return [
-			border(`╭${"─".repeat(innerWidth)}╮`),
-			line(` ${bold(ansiRgb("#00C8D7", "SESSION"))}`),
-			line(""),
-			...rows.map(([key, item]) => line(` ${label(key.padEnd(7))} ${value(item)}`)),
-			line(""),
-			line(` ${label("flow".padEnd(7))} ${ansiRgb("#00C8D7", "P")} -> ${ansiRgb("#00C8D7", "B")} -> ${ansiRgb("#00C8D7", "T")} -> ${ansiRgb("#00C8D7", "R")}`),
-			border(`╰${"─".repeat(innerWidth)}╯`),
-		];
+		return renderSessionPanel(this.ctx, this.runtime, this.getStatusSnapshot(), width);
 	}
 
 	private composeColumns(left: string[], right: string[], width: number, gap: number): string[] {
@@ -490,7 +517,7 @@ function buildMinimalFooter(ctx: ExtensionContext, runtime: ExtensionAPI, status
 			render(width: number): string[] {
 				statusSnapshot.branch = stripAnsi(footerData.getGitBranch() ?? "");
 				statusSnapshot.mcp = stripAnsi(getMcpStatus(footerData) ?? "");
-				if (!hasVisibleConversation(ctx) && width >= 112) return [];
+				if (width >= 112) return [];
 
 				const compact = width < 90;
 				const project = shortPath(ctx.cwd, compact ? 24 : 36);
@@ -525,7 +552,7 @@ export default function jvibeKernel(runtime: ExtensionAPI) {
 		}
 		ctx.ui.setTheme(JVIBE_THEME_NAME);
 		ctx.ui.setTitle("JVibe");
-		ctx.ui.setHeader(buildConversationHeader(ctx));
+		ctx.ui.setHeader(buildConversationHeader(ctx, runtime, () => statusSnapshot));
 		ctx.ui.setEditorComponent((tui, editorTheme, keybindings) => new JVibeWelcomeEditor(tui, editorTheme, keybindings, ctx, runtime, () => statusSnapshot));
 		ctx.ui.setFooter(buildMinimalFooter(ctx, runtime, statusSnapshot));
 		ctx.ui.setStatus("jvibe", "auto");
