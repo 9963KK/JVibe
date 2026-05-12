@@ -51,6 +51,7 @@ const MUTED = "#6F7782";
 const DIM = "#9AA2AB";
 const ACCENT = "#00C8D7";
 const SUCCESS = "#2F9E55";
+let sidebarRenderActive = false;
 
 function shortPath(cwd: string, width: number): string {
 	const home = process.env.HOME;
@@ -65,6 +66,10 @@ function isWideLayout(width: number): boolean {
 function mainContentWidth(width: number): number {
 	if (!isWideLayout(width)) return width;
 	return Math.max(54, width - SIDEBAR_WIDTH - SIDEBAR_GAP);
+}
+
+function padToWidth(line: string, width: number): string {
+	return `${line}${" ".repeat(Math.max(0, width - visibleWidth(line)))}`;
 }
 
 function formatContextUsage(ctx: ExtensionContext): string {
@@ -96,7 +101,7 @@ type WelcomeStatusSnapshot = {
 function getMcpStatus(footerData: FooterData): string | undefined {
 	const mcpStatus = Array.from(footerData.getExtensionStatuses().values()).find((status) => status.includes("MCP:"));
 	if (!mcpStatus) return undefined;
-	return mcpStatus.replace(/^MCP:\s*/i, "mcp ");
+	return mcpStatus.replace(/^.*?MCP:\s*/i, "");
 }
 
 function renderSessionPanel(ctx: ExtensionContext, runtime: ExtensionAPI, snapshot: WelcomeStatusSnapshot, width: number, compact = false): string[] {
@@ -136,7 +141,7 @@ function renderSessionPanel(ctx: ExtensionContext, runtime: ExtensionAPI, snapsh
 		line(),
 		line(section("Agents")),
 		line(bullet(SUCCESS, `${value("Builder")} ${label("active")}`)),
-		line(label("Planner -> Builder -> Tester -> Reviewer")),
+		line(`${label("flow")} ${value("Plan -> Build -> Test -> Review")}`),
 		line(),
 		line(section("MCP")),
 		line(bullet(mcp.includes("0/") ? DIM : SUCCESS, label(mcp))),
@@ -147,14 +152,49 @@ function renderSessionPanel(ctx: ExtensionContext, runtime: ExtensionAPI, snapsh
 	];
 }
 
-function composeHeaderColumns(left: string[], right: string[], leftWidth: number, gap: number): string[] {
+type SidebarTUI = TUI & {
+	__jvibeSidebarPatched?: boolean;
+	__jvibeSidebarState?: {
+		ctx: ExtensionContext;
+		runtime: ExtensionAPI;
+		getStatusSnapshot: () => WelcomeStatusSnapshot;
+	};
+	render(width: number): string[];
+};
+
+function composeSidebarRows(left: string[], right: string[], leftWidth: number, gap: number): string[] {
 	const rowCount = Math.max(left.length, right.length);
 	return Array.from({ length: rowCount }, (_, index) => {
-		const leftLine = left[index] ?? "";
+		const leftLine = truncateToWidth(left[index] ?? "", leftWidth, "");
 		const rightLine = right[index] ?? "";
-		const leftPadding = " ".repeat(Math.max(0, leftWidth - visibleWidth(leftLine)));
-		return `${leftLine}${leftPadding}${" ".repeat(gap)}${rightLine}`;
+		return `${padToWidth(leftLine, leftWidth)}${" ".repeat(gap)}${rightLine}`;
 	});
+}
+
+function installSidebarRenderer(tui: TUI, state: NonNullable<SidebarTUI["__jvibeSidebarState"]>): void {
+	const patchable = tui as SidebarTUI;
+	patchable.__jvibeSidebarState = state;
+	if (patchable.__jvibeSidebarPatched) return;
+
+	const originalRender = patchable.render.bind(tui);
+	patchable.render = (width: number): string[] => {
+		const current = patchable.__jvibeSidebarState;
+		if (!current || !isWideLayout(width) || !hasVisibleConversation(current.ctx)) {
+			return originalRender(width);
+		}
+
+		const leftWidth = mainContentWidth(width);
+		sidebarRenderActive = true;
+		try {
+			const left = originalRender(leftWidth);
+			const right = renderSessionPanel(current.ctx, current.runtime, current.getStatusSnapshot(), SIDEBAR_WIDTH);
+			return composeSidebarRows(left, right, leftWidth, SIDEBAR_GAP);
+		}
+		finally {
+			sidebarRenderActive = false;
+		}
+	};
+	patchable.__jvibeSidebarPatched = true;
 }
 
 function oneLine(parts: string[], width: number, separator: string): string {
@@ -419,7 +459,9 @@ function installConversationRenderers(): void {
 }
 
 function buildConversationHeader(ctx: ExtensionContext, runtime: ExtensionAPI, getStatusSnapshot: () => WelcomeStatusSnapshot) {
-	return (_tui: TUI, theme: Theme): Component => ({
+	return (tui: TUI, theme: Theme): Component => {
+		installSidebarRenderer(tui, { ctx, runtime, getStatusSnapshot });
+		return ({
 		invalidate() {},
 		render(width: number): string[] {
 			if (!hasVisibleConversation(ctx)) return [];
@@ -435,17 +477,6 @@ function buildConversationHeader(ctx: ExtensionContext, runtime: ExtensionAPI, g
 			].join(theme.fg("dim", "  ·  "));
 			const status = visibleWidth(fullStatus) + 2 <= width ? fullStatus : compactStatus;
 			const padded = ` ${status} `;
-			if (isWideLayout(width)) {
-				const leftWidth = mainContentWidth(width);
-				const panel = renderSessionPanel(ctx, runtime, getStatusSnapshot(), SIDEBAR_WIDTH, true);
-				const left = [
-					"",
-					truncateToWidth(padded, leftWidth, "..."),
-					theme.fg("borderMuted", "─".repeat(leftWidth)),
-				];
-				return composeHeaderColumns(left, panel, leftWidth, SIDEBAR_GAP);
-			}
-
 			return [
 				"",
 				truncateToWidth(padded, width, "..."),
@@ -453,6 +484,7 @@ function buildConversationHeader(ctx: ExtensionContext, runtime: ExtensionAPI, g
 			];
 		},
 	});
+	};
 }
 
 class JVibeWelcomeEditor extends CustomEditor {
@@ -475,7 +507,7 @@ class JVibeWelcomeEditor extends CustomEditor {
 	}
 
 	private renderInputBox(width: number): string[] {
-		const innerWidth = Math.max(8, width - 3);
+		const innerWidth = Math.max(8, width - 4);
 		const lines = super.render(innerWidth);
 		let contentLines = lines.length >= 3 ? lines.slice(1, -1) : lines;
 		if (contentLines.length === 0) contentLines = [""];
@@ -486,10 +518,12 @@ class JVibeWelcomeEditor extends CustomEditor {
 			contentLines = [` ${cursor} ${placeholder}`];
 		}
 
+		const border = ansiRgb(ACCENT, `┌${"─".repeat(innerWidth + 2)}┐`);
+		const bottomBorder = ansiRgb(ACCENT, `└${"─".repeat(innerWidth + 2)}┘`);
 		const promptLine = (line: string) => {
 			const trimmed = truncateToWidth(line, innerWidth, "...");
 			const padding = " ".repeat(Math.max(0, innerWidth - visibleWidth(trimmed)));
-			return `${ansiRgb(ACCENT, "┃")}${ansiBg(PROMPT_BG, ` ${trimmed}${padding} `)}`;
+			return `${ansiRgb(ACCENT, "│")}${ansiBg(PROMPT_BG, ` ${trimmed}${padding} `)}${ansiRgb(ACCENT, "│")}`;
 		};
 		const snapshot = this.getStatusSnapshot();
 		const branch = stripAnsi(snapshot.branch || "main");
@@ -510,8 +544,10 @@ class JVibeWelcomeEditor extends CustomEditor {
 		const footer = `${ansiRgb(DIM, shortPath(this.ctx.cwd, Math.max(16, Math.floor(innerWidth * 0.38))))}${ansiRgb(DIM, "  ·  ")}${ansiRgb(SUCCESS, branch)}${ansiRgb(DIM, "  ·  ")}${formatContextUsage(this.ctx)}`;
 
 		return [
+			border,
 			...contentLines.map(promptLine),
 			promptLine(` ${meta}`),
+			bottomBorder,
 			ansiRgb(DIM, ` ${footer}`),
 		];
 	}
@@ -570,7 +606,7 @@ function buildMinimalFooter(ctx: ExtensionContext, runtime: ExtensionAPI, status
 			render(width: number): string[] {
 				statusSnapshot.branch = stripAnsi(footerData.getGitBranch() ?? "");
 				statusSnapshot.mcp = stripAnsi(getMcpStatus(footerData) ?? "");
-				if (width >= 112) return [];
+				if (sidebarRenderActive || width >= 112) return [];
 
 				const compact = width < 90;
 				const project = shortPath(ctx.cwd, compact ? 24 : 36);
