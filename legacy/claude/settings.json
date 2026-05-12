@@ -1,0 +1,68 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'hook=\"load-jvibe-full-context.sh\"; dir=\"$PWD\"; while true; do path=\"$dir/.claude/hooks/$hook\"; if [ -f \"$path\" ]; then /bin/bash \"$path\"; exit 0; fi; if [ \"$dir\" = \"/\" ]; then break; fi; dir=\"$(dirname \"$dir\")\"; done; echo \"{\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"SessionStart\\\",\\\"additionalContext\\\":\\\"\\\"}}\"; exit 0'",
+            "timeout": 8000,
+            "description": "加载完整 JVibe 上下文（agents/commands/核心文档快照）"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'hook=\"sync-jvibe-context.sh\"; dir=\"$PWD\"; while true; do path=\"$dir/.claude/hooks/$hook\"; if [ -f \"$path\" ]; then /bin/bash \"$path\"; exit 0; fi; if [ \"$dir\" = \"/\" ]; then break; fi; dir=\"$(dirname \"$dir\")\"; done; echo \"{\\\"decision\\\":\\\"allow\\\"}\"; exit 0'",
+            "timeout": 3000,
+            "description": "检测核心文档变更，按需注入更新内容"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'hook=\"sync-feature-status.sh\"; dir=\"$PWD\"; while true; do path=\"$dir/.claude/hooks/$hook\"; if [ -f \"$path\" ]; then /bin/bash \"$path\"; exit 0; fi; if [ \"$dir\" = \"/\" ]; then break; fi; dir=\"$(dirname \"$dir\")\"; done; exit 0'",
+            "timeout": 10000,
+            "description": "当功能清单被修改时，自动推导功能状态"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'hook=\"guard-output.sh\"; dir=\"$PWD\"; while true; do path=\"$dir/.claude/hooks/$hook\"; if [ -f \"$path\" ]; then /bin/bash \"$path\"; exit 0; fi; if [ \"$dir\" = \"/\" ]; then break; fi; dir=\"$(dirname \"$dir\")\"; done; exit 0'",
+            "timeout": 3000,
+            "description": "Warn on long outputs without structured blocks"
+          },
+          {
+            "type": "command",
+            "command": "sh -c 'hook=\"sync-stats.sh\"; dir=\"$PWD\"; while true; do path=\"$dir/.claude/hooks/$hook\"; if [ -f \"$path\" ]; then /bin/bash \"$path\"; exit 0; fi; if [ \"$dir\" = \"/\" ]; then break; fi; dir=\"$(dirname \"$dir\")\"; done; exit 0'",
+            "timeout": 5000,
+            "description": "Agent 完成后输出项目统计信息"
+          }
+        ]
+      }
+    ]
+  },
+  "jvibe": {
+    "version": "1.1.9",
+    "installedAt": "2026-01-20T04:12:54.780Z",
+    "mode": "full",
+    "adapter": "claude"
+  }
+}

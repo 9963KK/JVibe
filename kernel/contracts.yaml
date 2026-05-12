@@ -1,0 +1,237 @@
+version: 2
+name: jvibe-agent-contracts
+purpose: >
+  Machine-readable I/O contracts for JVibe subagents and keepgo dispatch.
+  JVibe subagents handle general tasks; code work is one task category, not the whole system.
+
+conventions:
+  feature_id:
+    pattern: "^F-[0-9]{3,}$"
+    examples: ["F-001", "F-012", "F-120"]
+    nullable: true
+    note: "Current tracking ID; may represent a general task, not only a product feature."
+  task_kind:
+    enum: ["general", "code", "docs", "research", "ops", "design", "review"]
+  complexity:
+    enum: ["simple", "moderate", "complex", "unclear"]
+  decomposition:
+    enum: ["direct", "steps", "modules", "work_packages", "multi_round"]
+  scope:
+    enum: ["unit", "integration", "e2e", "workflow", "document", "manual"]
+  verdict:
+    enum: ["pass", "partial", "fail", "deviated"]
+  review_decision:
+    enum: ["accept_deviation", "revise_plan", "redo_build", "needs_human", "capture_learning"]
+  confidence:
+    enum: ["low", "medium", "high"]
+
+hard_rules:
+  - id: HR-001
+    rule: "All subagent calls MUST include a fenced `task_input` YAML block."
+  - id: HR-002
+    rule: "All subagent outputs MUST be a single fenced YAML block with `result` and `handoff`."
+  - id: HR-003
+    rule: "Planner MUST define acceptance criteria unless it explicitly returns a clarification request."
+  - id: HR-004
+    rule: "Builder MAY deviate from the plan only when useful or necessary, but MUST record deviations."
+  - id: HR-005
+    rule: "Tester MUST verify against the plan and original user goal, not only against tool/test output."
+  - id: HR-006
+    rule: "Reviewer MUST decide whether a deviation is acceptable before the flow treats deviated work as complete."
+  - id: HR-007
+    rule: "Models retain routing discretion; dispatch rules are defaults, not a complete decision tree."
+
+shared:
+  handoff:
+    required_fields: ["target", "reason", "payload"]
+    target_enum: ["main", "planner", "builder", "tester", "reviewer"]
+    payload_minimal:
+      feature_id: "F-XXX|null"
+      task_kind: "general|code|docs|research|ops|design|review"
+      work_packages: ["string?"]
+      files: ["<paths>?"]
+      scope: "unit|integration|e2e|workflow|document|manual"
+      notes: ""
+
+agents:
+  planner:
+    task_input:
+      type_const: "plan_task"
+      required_fields: ["type", "goal"]
+      fields:
+        type: "plan_task"
+        feature_id: "F-XXX|null"
+        goal: "string"
+        task_kind: "general|code|docs|research|ops|design|review?"
+        constraints: ["string?"]
+        known_context: "object?"
+        desired_depth: "light|normal|deep?"
+    output:
+      required_fields: ["result", "handoff"]
+      result_fields:
+        feature_id: "F-XXX|null"
+        goal: "string"
+        complexity: "simple|moderate|complex|unclear"
+        decomposition: "direct|steps|modules|work_packages|multi_round"
+        plan:
+          - id: "P1"
+            title: "string"
+            objective: "string"
+            owner_hint: "builder|tester|reviewer|main"
+            inputs: ["string?"]
+            expected_output: "string"
+            boundaries: ["string?"]
+        acceptance_criteria: ["string"]
+        risks: ["string?"]
+        clarification_needed: ["string?"]
+        reviewer_recommended: "true|false"
+      handoff_defaults:
+        target: "builder"
+        reason: "Plan is ready for execution"
+
+  builder:
+    task_input:
+      type_const: "build_task"
+      required_fields: ["type", "goal", "plan"]
+      fields:
+        type: "build_task"
+        feature_id: "F-XXX|null"
+        goal: "string"
+        task_kind: "general|code|docs|research|ops|design|review?"
+        plan: ["object"]
+        acceptance_criteria: ["string"]
+        allowed_tools: ["string?"]
+        boundaries: ["string?"]
+        context: "object?"
+    output:
+      required_fields: ["result", "handoff"]
+      result_fields:
+        feature_id: "F-XXX|null"
+        completed_work:
+          - plan_id: "P1"
+            status: "done|partial|blocked|skipped"
+            summary: "string"
+        outputs: ["string"]
+        files_created: ["path?"]
+        files_modified: ["path?"]
+        state_changes: ["string?"]
+        assumptions: ["string?"]
+        blockers: ["string?"]
+        deviations:
+          - plan_id: "P1?"
+            description: "string"
+            reason: "string"
+            impact: "low|medium|high"
+        suggested_verification: ["string"]
+      handoff_defaults:
+        target: "tester"
+        reason: "Execution completed or reached a verification point"
+
+  tester:
+    task_input:
+      type_const: "test_task"
+      required_fields: ["type", "goal", "plan", "builder_result", "acceptance_criteria"]
+      fields:
+        type: "test_task"
+        feature_id: "F-XXX|null"
+        goal: "string"
+        task_kind: "general|code|docs|research|ops|design|review?"
+        plan: ["object"]
+        builder_result: "object"
+        acceptance_criteria: ["string"]
+        verification_scope: "unit|integration|e2e|workflow|document|manual"
+        context: "object?"
+    output:
+      required_fields: ["result", "handoff"]
+      result_fields:
+        feature_id: "F-XXX|null"
+        verdict: "pass|partial|fail|deviated"
+        completion_check:
+          - criterion: "string"
+            status: "pass|partial|fail|unknown"
+            evidence: "string"
+        plan_adherence:
+          followed: ["string"]
+          missing: ["string?"]
+          deviations: ["object?"]
+        evidence:
+          commands: ["string?"]
+          files_checked: ["path?"]
+          notes: ["string?"]
+        risks: ["string?"]
+        next_action: "finish|return_to_builder|return_to_planner|send_to_reviewer|ask_user"
+      handoff_rules:
+        pass:
+          target: "main"
+        partial:
+          target: "builder"
+        fail:
+          target: "builder|planner"
+        deviated:
+          target: "reviewer"
+
+  reviewer:
+    task_input:
+      type_enum: ["review_flow", "review_deviation"]
+      required_fields: ["type", "goal"]
+      fields:
+        type: "review_flow|review_deviation"
+        feature_id: "F-XXX|null"
+        goal: "string"
+        plan: ["object?"]
+        builder_result: "object?"
+        tester_result: "object?"
+        conversation_notes: ["string?"]
+        deviation: "object?"
+        review_focus: "learning|deviation|quality|process?"
+    output:
+      required_fields: ["result", "handoff"]
+      result_fields:
+        feature_id: "F-XXX|null"
+        review_decision: "accept_deviation|revise_plan|redo_build|needs_human|capture_learning"
+        rationale: "string"
+        process_findings:
+          - severity: "info|warning|error"
+            finding: "string"
+            evidence: "string?"
+        lessons:
+          - category: "planning|building|testing|reviewing|prompting|tooling"
+            summary: "string"
+            candidate_persistence: "none|docs|skill|prompt|runtime"
+        agent_improvements:
+          - target: "planner|builder|tester|reviewer|jvibe-runtime"
+            suggestion: "string"
+        required_rework:
+          target: "planner|builder|tester|main|null"
+          instructions: "string?"
+      handoff_rules:
+        accept_deviation:
+          target: "main"
+        capture_learning:
+          target: "main"
+        revise_plan:
+          target: "planner"
+        redo_build:
+          target: "builder"
+        needs_human:
+          target: "main"
+
+dispatch:
+  defaults:
+    - when: "goal unclear OR task has multiple plausible paths"
+      call: "planner"
+    - when: "plan exists AND executable work remains"
+      call: "builder"
+    - when: "builder reports completion OR user asks whether it is done"
+      call: "tester"
+    - when: "tester verdict == deviated"
+      call: "reviewer"
+    - when: "flow completed AND learning may improve JVibe"
+      call: "reviewer"
+  loop_rules:
+    tester_partial: "return_to_builder"
+    tester_fail_plan_gap: "return_to_planner"
+    tester_fail_execution_gap: "return_to_builder"
+    reviewer_accept_deviation: "main_finish"
+    reviewer_revise_plan: "return_to_planner"
+    reviewer_redo_build: "return_to_builder"

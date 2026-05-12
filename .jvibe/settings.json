@@ -1,0 +1,19 @@
+{
+  "packages": [
+    "packages/jvibe-subagents",
+    "packages/jvibe-mcp-adapter"
+  ],
+  "extensions": [
+    "extensions/jvibe-kernel.ts"
+  ],
+  "prompts": [
+    "prompts"
+  ],
+  "skills": [
+    "../skills"
+  ],
+  "enableSkillCommands": true,
+  "subagents": {
+    "disableBuiltins": false
+  }
+}

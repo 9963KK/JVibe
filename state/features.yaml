@@ -1,0 +1,32 @@
+# JVibe Feature Registry
+#
+# 功能状态的唯一来源（SoT）。
+# 由 Planner 按需追加 Feature 条目，Builder/Tester 更新状态。
+# 替代原 docs/core/Feature-List.md。
+
+version: 1
+
+conventions:
+  status:
+    - "planned"     # 已规划，未开始
+    - "in_progress" # 开发中
+    - "done"        # 已完成
+    - "blocked"     # 被阻塞
+    - "archived"    # 已归档（不再活跃追踪）
+  priority:
+    - "P0"  # 紧急/阻塞性
+    - "P1"  # 高优先级
+    - "P2"  # 中优先级
+    - "P3"  # 低优先级
+  module:
+    enum:
+      - kernel
+      - runtime
+      - state
+      - config
+      - docs
+      - skills
+      - extensions
+      - tools
+
+features: []

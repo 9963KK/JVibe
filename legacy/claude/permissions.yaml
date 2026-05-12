@@ -1,0 +1,100 @@
+version: 1
+agents:
+  planner:
+    read:
+      - "**/*"
+    write:
+      - docs/core/Feature-List.md
+      - docs/.jvibe/tasks.yaml
+    write_forbidden:
+      - .claude/**
+      - .opencode/**
+      - .jvibe-state.json
+    ops:
+      network: allowed
+      install: forbidden
+      tests: forbidden
+      git: forbidden
+
+  developer:
+    read:
+      - "**/*"
+    write:
+      - "**/*"
+    write_forbidden:
+      - .claude/**
+      - .opencode/**
+      - .jvibe-state.json
+    ops:
+      network: allowed
+      install: allowed
+      tests: allowed
+      git: forbidden
+
+  tester:
+    read:
+      - "**/*"
+    write:
+      - "**/*"
+    write_forbidden:
+      - .claude/**
+      - .opencode/**
+      - .jvibe-state.json
+    ops:
+      network: allowed
+      install: allowed
+      tests: allowed
+      git: forbidden
+
+  bugfix:
+    read:
+      - "**/*"
+    write:
+      - "**/*"
+    write_forbidden:
+      - .claude/**
+      - .opencode/**
+      - .jvibe-state.json
+    ops:
+      network: allowed
+      install: allowed
+      tests: allowed
+      git: forbidden
+
+  reviewer:
+    read:
+      - docs/**
+      - src/**
+      - tests/**
+      - "**/*.test.*"
+      - "**/*.spec.*"
+    write: []
+    write_forbidden:
+      - "**/*"
+    ops:
+      network: allowed
+      install: forbidden
+      tests: forbidden
+      git: read_only
+
+  doc-sync:
+    read:
+      - docs/core/Feature-List.md
+      - docs/core/Project.md
+      - docs/.jvibe/tasks.yaml
+    write:
+      - docs/core/Project.md
+    conditional_write:
+      - path: docs/core/Feature-List.md
+        when: only_if_explicitly_requested
+      - path: docs/.jvibe/tasks.yaml
+        when: only_if_explicitly_requested
+    write_forbidden:
+      - .claude/**
+      - .opencode/**
+      - .jvibe-state.json
+    ops:
+      network: allowed
+      install: forbidden
+      tests: forbidden
+      git: only_if_user_requested
