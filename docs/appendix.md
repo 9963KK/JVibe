@@ -64,6 +64,7 @@
 
 | ID | 范围 | 风格基线描述 | 资产入口 | 落地位置 | 状态 |
 |---|---|---|---|---|---|
+| UI-001 | Visual Mode | 参考 Craft Agents 的多会话、source、permission mode、diff、artifact preview 工作台体验，但保留 JVibe kernel 作为唯一调度核心 | L-craft-agents-oss | `docs/interface-modes.md` | active |
 
 ---
 
@@ -87,3 +88,5 @@
 
 | Link ID | 名称 | 链接 |
 |---------|------|------|
+| L-craft-agents-oss | craft-ai-agents/craft-agents-oss | https://github.com/craft-ai-agents/craft-agents-oss |
+| L-craft-agents-intro | Introducing Craft Agents | https://www.craft.do/vi/blog/introducing-craft-agents |

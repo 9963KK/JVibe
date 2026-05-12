@@ -1,0 +1,52 @@
+version: 1
+
+# JVibe has two user-facing surfaces that share the same kernel, session model,
+# agent contracts, MCP sources, and long-term project state.
+modes:
+  tui:
+    status: active
+    command: jvibe
+    purpose: Fast terminal-first coding workflow.
+    interface:
+      density: compact
+      primary_view: conversation
+      secondary_views:
+        - inline tool output
+        - inline diff summary
+        - compact footer status
+    default_for:
+      - coding tasks
+      - quick planning
+      - local verification
+      - shell-heavy work
+
+  visual:
+    status: planned
+    command: jvibe visual
+    purpose: Visual workspace for long-running sessions, review, sources, and rich artifacts.
+    interface:
+      density: calm
+      primary_view: session workspace
+      secondary_views:
+        - session inbox
+        - sources and skills
+        - permission mode switcher
+        - rich artifact preview
+        - multi-file diff
+    inspired_by:
+      - craft-agents-oss
+    default_for:
+      - multi-session work
+      - artifact review
+      - source management
+      - visual diff and preview
+      - long-running background tasks
+
+shared_runtime:
+  kernel: kernel/contracts.yaml
+  orchestration: kernel/orchestration.md
+  project_settings: .jvibe/settings.json
+  mcp_config: .mcp.json
+  state:
+    - state/tasks.yaml
+    - state/features.yaml

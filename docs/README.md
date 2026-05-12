@@ -10,6 +10,7 @@
 |---------|------|
 | 了解整体架构 | [architecture.md](./architecture.md) |
 | 理解内核设计 | [kernel-design.md](./kernel-design.md) |
+| 了解 TUI / Visual 双模式 | [interface-modes.md](./interface-modes.md) |
 | 了解 Agent 系统 | [agent-system.md](./agent-system.md) |
 | 了解 Extension 机制 | [extension-system.md](./extension-system.md) |
 | 查阅演化路线 | [evolution.md](./evolution.md) |
@@ -38,6 +39,7 @@ JVibe/
 │   ├── README.md         ← 索引入口
 │   ├── architecture.md   ← 系统架构
 │   ├── kernel-design.md  ← 内核设计决策
+│   ├── interface-modes.md ← TUI / Visual 双模式
 │   ├── agent-system.md   ← Agent 系统
 │   ├── extension-system.md ← 扩展机制
 │   ├── evolution.md      ← 演化路线
