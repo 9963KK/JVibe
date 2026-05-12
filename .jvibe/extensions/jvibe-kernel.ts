@@ -54,6 +54,18 @@ const ACCENT = "#00C8D7";
 const SUCCESS = "#2F9E55";
 let sidebarRenderActive = false;
 
+type RoleKey = "user" | "jvibe" | "planner" | "builder" | "tester" | "reviewer" | "subagent";
+
+const ROLE_BADGES: Record<RoleKey, { label: string; icon: string; color: string }> = {
+	user: { label: "User", icon: "●", color: "#2F7DCE" },
+	jvibe: { label: "JVibe", icon: "✦", color: ACCENT },
+	planner: { label: "Planner", icon: "◇", color: "#B7791F" },
+	builder: { label: "Builder", icon: "▣", color: SUCCESS },
+	tester: { label: "Tester", icon: "✓", color: "#2F7DCE" },
+	reviewer: { label: "Reviewer", icon: "◈", color: "#8A5CF6" },
+	subagent: { label: "Subagent", icon: "◆", color: ACCENT },
+};
+
 function shortPath(cwd: string, width: number): string {
 	const home = process.env.HOME;
 	const normalized = home && cwd.startsWith(home) ? `~${cwd.slice(home.length)}` : cwd;
@@ -71,6 +83,40 @@ function mainContentWidth(width: number): number {
 
 function padToWidth(line: string, width: number): string {
 	return `${line}${" ".repeat(Math.max(0, width - visibleWidth(line)))}`;
+}
+
+function roleFromText(text: string | undefined): RoleKey | undefined {
+	const normalized = text?.toLowerCase() ?? "";
+	if (normalized.includes("planner")) return "planner";
+	if (normalized.includes("builder")) return "builder";
+	if (normalized.includes("tester")) return "tester";
+	if (normalized.includes("reviewer")) return "reviewer";
+	if (normalized.includes("jvibe")) return "jvibe";
+	if (normalized.includes("user")) return "user";
+	return undefined;
+}
+
+function roleBadge(role: RoleKey, colorOverride?: string): string {
+	const badge = ROLE_BADGES[role];
+	const color = colorOverride ?? badge.color;
+	return `${ansiRgb(color, badge.icon)} ${ansiRgb(color, badge.label)}`;
+}
+
+function roleLabel(label: string): string {
+	const role = roleFromText(label) ?? "subagent";
+	return `${ROLE_BADGES[role].icon} ${label}`;
+}
+
+function roleFromArgs(args: Record<string, unknown> | undefined): RoleKey | undefined {
+	if (!args) return undefined;
+	const keys = ["agentName", "agent", "subagent", "role", "name", "type"];
+	for (const key of keys) {
+		const value = args[key];
+		if (typeof value !== "string") continue;
+		const role = roleFromText(value);
+		if (role) return role;
+	}
+	return undefined;
 }
 
 function formatContextUsage(ctx: ExtensionContext): string {
@@ -141,8 +187,9 @@ function renderSessionPanel(ctx: ExtensionContext, runtime: ExtensionAPI, snapsh
 		line(label(`${tools} tools`)),
 		line(),
 		line(section("Agents")),
-		line(bullet(SUCCESS, `${value("Builder")} ${label("active")}`)),
-		line(`${label("flow")} ${value("Plan -> Build -> Test -> Review")}`),
+		line(`${roleBadge("builder")} ${label("active")}`),
+		line(`${roleBadge("planner")} ${label("->")} ${roleBadge("builder")}`),
+		line(`${roleBadge("tester")} ${label("->")} ${roleBadge("reviewer")}`),
 		line(),
 		line(section("MCP")),
 		line(bullet(mcp.includes("0/") ? DIM : SUCCESS, label(mcp))),
@@ -313,7 +360,8 @@ function normalizeMessageBody(lines: string[]): string[] {
 function decorateTimelineLines(lines: string[], width: number, label: string, color: string, accent = false): string[] {
 	if (lines.length === 0) return lines;
 	const clean = normalizeMessageBody(lines);
-	const meta = `${ansiRgb("#9AA2AB", "     ")}${accent ? bold(ansiRgb(color, label)) : ansiRgb(color, label)}`;
+	const displayLabel = roleLabel(label);
+	const meta = `${ansiRgb("#9AA2AB", "     ")}${accent ? bold(ansiRgb(color, displayLabel)) : ansiRgb(color, displayLabel)}`;
 	const body = clean.map((line) => truncateToWidth(`  ${line}`, width, "..."));
 	return [
 		`${OSC133_ZONE_START}${truncateToWidth(meta, width, "...")}`,
@@ -362,6 +410,12 @@ function summarizeToolExecution(tool: ToolExecutionLike): string {
 	const pending = tool.isPartial === true || (tool.executionStarted === true && !tool.result);
 	const icon = failed ? "!" : pending ? "->" : "✓";
 	const verb = failed ? "failed" : pending ? "using" : "used";
+	const agentRole = roleFromText(name) ?? roleFromArgs(args);
+
+	if (agentRole && (name.toLowerCase().includes("agent") || name.toLowerCase().includes("subagent"))) {
+		const action = failed ? "failed" : pending ? "assigned" : "finished";
+		return `${icon} ${ROLE_BADGES[agentRole].icon} ${ROLE_BADGES[agentRole].label} ${action}`;
+	}
 
 	switch (name) {
 		case "read":
@@ -495,14 +549,14 @@ function buildConversationHeader(ctx: ExtensionContext, runtime: ExtensionAPI, g
 		render(width: number): string[] {
 			if (!hasVisibleConversation(ctx)) return [];
 			const fullStatus = [
-				theme.bold(theme.fg("success", "Builder active")),
+				theme.bold(theme.fg("success", `${ROLE_BADGES.builder.icon} Builder active`)),
 				theme.fg("dim", "auto orchestration"),
-				`${theme.fg("accent", "Planner")} -> ${theme.fg("accent", "Builder")} -> ${theme.fg("accent", "Tester")} -> ${theme.fg("accent", "Reviewer")}`,
+				`${theme.fg("warning", `${ROLE_BADGES.planner.icon} Planner`)} -> ${theme.fg("success", `${ROLE_BADGES.builder.icon} Builder`)} -> ${theme.fg("accent", `${ROLE_BADGES.tester.icon} Tester`)} -> ${theme.fg("muted", `${ROLE_BADGES.reviewer.icon} Reviewer`)}`,
 			].join(theme.fg("dim", "  ·  "));
 			const compactStatus = [
-				theme.bold(theme.fg("success", "Builder active")),
+				theme.bold(theme.fg("success", `${ROLE_BADGES.builder.icon} Builder`)),
 				theme.fg("dim", "auto"),
-				`${theme.fg("accent", "P")} -> ${theme.fg("accent", "B")} -> ${theme.fg("accent", "T")} -> ${theme.fg("accent", "R")}`,
+				`${theme.fg("warning", ROLE_BADGES.planner.icon)} -> ${theme.fg("success", ROLE_BADGES.builder.icon)} -> ${theme.fg("accent", ROLE_BADGES.tester.icon)} -> ${theme.fg("muted", ROLE_BADGES.reviewer.icon)}`,
 			].join(theme.fg("dim", "  ·  "));
 			const status = visibleWidth(fullStatus) + 2 <= width ? fullStatus : compactStatus;
 			const padded = ` ${status} `;
