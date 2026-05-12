@@ -42,11 +42,29 @@ const CLEAR_VIEWPORT = "\x1b[2J\x1b[H";
 const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
 const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
+const WIDE_LAYOUT_COLUMNS = 120;
+const SIDEBAR_WIDTH = 42;
+const SIDEBAR_GAP = 4;
+const PROMPT_BG = "#F3F5F7";
+const TEXT = "#252A31";
+const MUTED = "#6F7782";
+const DIM = "#9AA2AB";
+const ACCENT = "#00C8D7";
+const SUCCESS = "#2F9E55";
 
 function shortPath(cwd: string, width: number): string {
 	const home = process.env.HOME;
 	const normalized = home && cwd.startsWith(home) ? `~${cwd.slice(home.length)}` : cwd;
 	return truncateToWidth(normalized, Math.max(12, width), "...");
+}
+
+function isWideLayout(width: number): boolean {
+	return width >= WIDE_LAYOUT_COLUMNS;
+}
+
+function mainContentWidth(width: number): number {
+	if (!isWideLayout(width)) return width;
+	return Math.max(54, width - SIDEBAR_WIDTH - SIDEBAR_GAP);
 }
 
 function formatContextUsage(ctx: ExtensionContext): string {
@@ -81,39 +99,51 @@ function getMcpStatus(footerData: FooterData): string | undefined {
 	return mcpStatus.replace(/^MCP:\s*/i, "mcp ");
 }
 
-function renderSessionPanel(ctx: ExtensionContext, runtime: ExtensionAPI, snapshot: WelcomeStatusSnapshot, width: number): string[] {
-	const innerWidth = Math.max(18, width - 2);
+function renderSessionPanel(ctx: ExtensionContext, runtime: ExtensionAPI, snapshot: WelcomeStatusSnapshot, width: number, compact = false): string[] {
+	const innerWidth = Math.max(24, width - 3);
 	const model = truncateToWidth(ctx.model?.id ?? "unknown", Math.max(10, innerWidth - 9), "...");
 	const tools = formatTools(runtime)?.replace(/^tools\s+/, "") ?? "0";
 	const mcp = stripAnsi(snapshot.mcp?.replace(/^mcp\s+/, "") || "auto");
 	const branch = stripAnsi(snapshot.branch || "unknown");
 	const project = shortPath(ctx.cwd, Math.max(10, innerWidth - 9));
-	const rows: Array<[string, string]> = [
-		["project", project],
-		["branch", branch],
-		["model", model],
-		["context", formatContextUsage(ctx).replace(/^ctx:\s*/, "")],
-		["tools", tools],
-		["mcp", mcp],
-		["mode", "auto"],
-	];
-	const border = (text: string) => ansiRgb("#E4E8EC", text);
-	const label = (text: string) => ansiRgb("#9AA2AB", text);
-	const value = (text: string) => ansiRgb("#252A31", text);
-	const line = (content: string) => {
+	const context = formatContextUsage(ctx).replace(/^ctx:\s*/, "");
+	const rail = ansiRgb("#E4E8EC", "│");
+	const section = (text: string) => bold(ansiRgb(TEXT, text));
+	const label = (text: string) => ansiRgb(MUTED, text);
+	const value = (text: string) => ansiRgb(TEXT, text);
+	const bullet = (color: string, text: string) => `${ansiRgb(color, "•")} ${text}`;
+	const line = (content = "") => {
 		const trimmed = truncateToWidth(content, innerWidth, "...");
 		const padding = " ".repeat(Math.max(0, innerWidth - visibleWidth(trimmed)));
-		return `${border("│")}${trimmed}${padding}${border("│")}`;
+		return `${rail}  ${trimmed}${padding}`;
 	};
 
+	if (compact) {
+		return [
+			line(`${section("JVibe")} ${label(project)}`),
+			line(`${label(context)} ${label("ctx")}  ${label(tools)} ${label("tools")}  ${bullet(mcp.includes("0/") ? DIM : SUCCESS, label(mcp))}`),
+			line(`${label("model")} ${value(model)}  ${label("branch")} ${value(branch)}`),
+		];
+	}
+
 	return [
-		border(`╭${"─".repeat(innerWidth)}╮`),
-		line(` ${bold(ansiRgb("#00C8D7", "SESSION"))}`),
-		line(""),
-		...rows.map(([key, item]) => line(` ${label(key.padEnd(7))} ${value(item)}`)),
-		line(""),
-		line(` ${label("flow".padEnd(7))} ${ansiRgb("#00C8D7", "P")} -> ${ansiRgb("#00C8D7", "B")} -> ${ansiRgb("#00C8D7", "T")} -> ${ansiRgb("#00C8D7", "R")}`),
-		border(`╰${"─".repeat(innerWidth)}╯`),
+		line(section("JVibe")),
+		line(label(project)),
+		line(),
+		line(section("Context")),
+		line(label(`${context} used`)),
+		line(label(`${tools} tools`)),
+		line(),
+		line(section("Agents")),
+		line(bullet(SUCCESS, `${value("Builder")} ${label("active")}`)),
+		line(label("Planner -> Builder -> Tester -> Reviewer")),
+		line(),
+		line(section("MCP")),
+		line(bullet(mcp.includes("0/") ? DIM : SUCCESS, label(mcp))),
+		line(),
+		line(section("Runtime")),
+		line(`${label("model")} ${value(model)}`),
+		line(`${label("branch")} ${value(branch)}`),
 	];
 }
 
@@ -155,6 +185,14 @@ function ansiRgb(hex: string, text: string): string {
 	const g = Number.parseInt(normalized.slice(2, 4), 16);
 	const b = Number.parseInt(normalized.slice(4, 6), 16);
 	return `\x1b[38;2;${r};${g};${b}m${text}\x1b[39m`;
+}
+
+function ansiBg(hex: string, text: string): string {
+	const normalized = hex.replace("#", "");
+	const r = Number.parseInt(normalized.slice(0, 2), 16);
+	const g = Number.parseInt(normalized.slice(2, 4), 16);
+	const b = Number.parseInt(normalized.slice(4, 6), 16);
+	return `\x1b[48;2;${r};${g};${b}m${text}\x1b[49m`;
 }
 
 function bold(text: string): string {
@@ -326,7 +364,8 @@ function installConversationRenderers(): void {
 	if (!userProto.__jvibeTimeline) {
 		const originalUserRender = userProto.render;
 		userProto.render = function patchedUserRender(this: unknown, width: number): string[] {
-			return decorateTimelineLines(originalUserRender.call(this, width), width, "User", "#2F7DCE");
+			const contentWidth = mainContentWidth(width);
+			return decorateTimelineLines(originalUserRender.call(this, contentWidth), contentWidth, "User", "#2F7DCE");
 		};
 		userProto.__jvibeTimeline = true;
 	}
@@ -347,7 +386,8 @@ function installConversationRenderers(): void {
 			originalUpdateContent.call(this, filteredMessage);
 		};
 		assistantProto.render = function patchedAssistantRender(this: unknown, width: number): string[] {
-			return decorateTimelineLines(originalAssistantRender.call(this, width), width, "JVibe", "#00C8D7", true);
+			const contentWidth = mainContentWidth(width);
+			return decorateTimelineLines(originalAssistantRender.call(this, contentWidth), contentWidth, "JVibe", "#00C8D7", true);
 		};
 		assistantProto.__jvibeTimeline = true;
 	}
@@ -355,10 +395,11 @@ function installConversationRenderers(): void {
 	const toolProto = ToolExecutionComponent.prototype as unknown as { render(width: number): string[]; __jvibeTimeline?: boolean };
 	if (!toolProto.__jvibeTimeline) {
 		toolProto.render = function patchedToolRender(this: unknown, width: number): string[] {
+			const contentWidth = mainContentWidth(width);
 			const summary = summarizeToolExecution(this as ToolExecutionLike);
 			const clean = stripAnsi(summary);
 			const color = clean.startsWith("!") ? "#D24B45" : clean.startsWith("✓") ? "#2F9E55" : "#00C8D7";
-			return [truncateToWidth(`  ${ansiRgb(color, clean.slice(0, clean.indexOf(" ") > -1 ? clean.indexOf(" ") : clean.length))}${clean.includes(" ") ? clean.slice(clean.indexOf(" ")) : ""}`, width, "...")];
+			return [truncateToWidth(`  ${ansiRgb(color, clean.slice(0, clean.indexOf(" ") > -1 ? clean.indexOf(" ") : clean.length))}${clean.includes(" ") ? clean.slice(clean.indexOf(" ")) : ""}`, contentWidth, "...")];
 		};
 		toolProto.__jvibeTimeline = true;
 	}
@@ -371,7 +412,7 @@ function installConversationRenderers(): void {
 			if (component._expanded) return originalCustomRender.call(this, width);
 
 			const summary = summarizeCustomMessage(component);
-			return [truncateToWidth(`  ${ansiRgb("#2F9E55", "✓")} ${summary.replace(/^✓\s*/, "")}`, width, "...")];
+			return [truncateToWidth(`  ${ansiRgb("#2F9E55", "✓")} ${summary.replace(/^✓\s*/, "")}`, mainContentWidth(width), "...")];
 		};
 		customProto.__jvibeTimeline = true;
 	}
@@ -394,23 +435,19 @@ function buildConversationHeader(ctx: ExtensionContext, runtime: ExtensionAPI, g
 			].join(theme.fg("dim", "  ·  "));
 			const status = visibleWidth(fullStatus) + 2 <= width ? fullStatus : compactStatus;
 			const padded = ` ${status} `;
-			if (width >= 112) {
-				const panelWidth = Math.min(36, Math.max(30, Math.floor(width * 0.22)));
-				const gap = 5;
-				const leftWidth = Math.max(48, width - panelWidth - gap);
-				const panel = renderSessionPanel(ctx, runtime, getStatusSnapshot(), panelWidth);
+			if (isWideLayout(width)) {
+				const leftWidth = mainContentWidth(width);
+				const panel = renderSessionPanel(ctx, runtime, getStatusSnapshot(), SIDEBAR_WIDTH, true);
 				const left = [
 					"",
-					theme.fg("borderMuted", "─".repeat(leftWidth)),
 					truncateToWidth(padded, leftWidth, "..."),
 					theme.fg("borderMuted", "─".repeat(leftWidth)),
 				];
-				return composeHeaderColumns(left, panel, leftWidth, gap);
+				return composeHeaderColumns(left, panel, leftWidth, SIDEBAR_GAP);
 			}
 
 			return [
 				"",
-				theme.fg("borderMuted", "─".repeat(width)),
 				truncateToWidth(padded, width, "..."),
 				theme.fg("borderMuted", "─".repeat(width)),
 			];
@@ -438,28 +475,44 @@ class JVibeWelcomeEditor extends CustomEditor {
 	}
 
 	private renderInputBox(width: number): string[] {
-		const innerWidth = Math.max(8, width - 2);
+		const innerWidth = Math.max(8, width - 3);
 		const lines = super.render(innerWidth);
 		let contentLines = lines.length >= 3 ? lines.slice(1, -1) : lines;
 		if (contentLines.length === 0) contentLines = [""];
 
 		if (this.getText().length === 0) {
-			const placeholder = ansiRgb("#6F7782", "Ask JVibe anything...");
-			const cursor = `${this.focused ? CURSOR_MARKER : ""}\x1b[7m \x1b[0m`;
+			const placeholder = ansiRgb(MUTED, "Ask JVibe anything...");
+			const cursor = `${this.focused ? CURSOR_MARKER : ""}\x1b[7m \x1b[27m`;
 			contentLines = [` ${cursor} ${placeholder}`];
 		}
 
-		const border = (text: string) => ansiRgb("#00C8D7", text);
-		const frameLine = (line: string) => {
+		const promptLine = (line: string) => {
 			const trimmed = truncateToWidth(line, innerWidth, "...");
 			const padding = " ".repeat(Math.max(0, innerWidth - visibleWidth(trimmed)));
-			return `${border("│")}${trimmed}${padding}${border("│")}`;
+			return `${ansiRgb(ACCENT, "┃")}${ansiBg(PROMPT_BG, ` ${trimmed}${padding} `)}`;
 		};
+		const snapshot = this.getStatusSnapshot();
+		const branch = stripAnsi(snapshot.branch || "main");
+		const model = truncateToWidth(this.ctx.model?.id ?? "unknown", Math.max(10, Math.floor(innerWidth * 0.36)), "...");
+		const leftMeta = [
+			ansiRgb(ACCENT, "JVibe"),
+			ansiRgb(TEXT, model),
+			ansiRgb(MUTED, "Ollama Cloud"),
+		].join(ansiRgb(DIM, "  ·  "));
+		const rightMeta = [
+			ansiRgb(TEXT, "tab"),
+			ansiRgb(MUTED, "agents"),
+			ansiRgb(TEXT, "ctrl+p"),
+			ansiRgb(MUTED, "commands"),
+		].join(" ");
+		const available = Math.max(0, innerWidth - visibleWidth(leftMeta) - visibleWidth(rightMeta) - 2);
+		const meta = `${leftMeta}${" ".repeat(available)}${rightMeta}`;
+		const footer = `${ansiRgb(DIM, shortPath(this.ctx.cwd, Math.max(16, Math.floor(innerWidth * 0.38))))}${ansiRgb(DIM, "  ·  ")}${ansiRgb(SUCCESS, branch)}${ansiRgb(DIM, "  ·  ")}${formatContextUsage(this.ctx)}`;
 
 		return [
-			border(`╭${"─".repeat(innerWidth)}╮`),
-			...contentLines.map(frameLine),
-			border(`╰${"─".repeat(innerWidth)}╯`),
+			...contentLines.map(promptLine),
+			promptLine(` ${meta}`),
+			ansiRgb(DIM, ` ${footer}`),
 		];
 	}
 
@@ -480,7 +533,7 @@ class JVibeWelcomeEditor extends CustomEditor {
 	}
 
 	render(width: number): string[] {
-		if (this.hasConversation()) return this.renderInputBox(width);
+		if (this.hasConversation()) return this.renderInputBox(mainContentWidth(width));
 
 		const columns = Math.max(40, width);
 		const rows = Math.max(18, this.tui.terminal.rows);
