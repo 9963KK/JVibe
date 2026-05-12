@@ -9,6 +9,10 @@
   "prompts": [
     "prompts"
   ],
+  "themes": [
+    "themes"
+  ],
+  "theme": "jvibe-opencode-light",
   "skills": [
     "../skills/source-command-jvibe-init/SKILL.md",
     "../skills/source-command-jvibe-keepgo/SKILL.md",

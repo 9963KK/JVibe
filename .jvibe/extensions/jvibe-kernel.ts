@@ -1,6 +1,15 @@
-import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
-import type { Component } from "@earendil-works/pi-tui";
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import {
+	AssistantMessageComponent,
+	CustomEditor,
+	ToolExecutionComponent,
+	UserMessageComponent,
+	type ExtensionAPI,
+	type ExtensionContext,
+	type KeybindingsManager,
+	type Theme,
+} from "@earendil-works/pi-coding-agent";
+import type { Component, EditorTheme, TUI } from "@earendil-works/pi-tui";
+import { CURSOR_MARKER, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 const JVIBE_KERNEL_PROMPT = `
 ## JVibe Kernel Orchestration
@@ -26,6 +35,12 @@ Role contracts live in \`kernel/contracts.yaml\`. Runtime role prompts live in \
 
 Reviewer lessons are proposals only. Do not automatically write long-term rules, specs, skills, prompts, or documentation from Reviewer output unless the parent agent decides to ask the user or the user has already requested persistence.
 `;
+
+const JVIBE_THEME_NAME = "jvibe-opencode-light";
+const CLEAR_VIEWPORT = "\x1b[2J\x1b[H";
+const OSC133_ZONE_START = "\x1b]133;A\x07";
+const OSC133_ZONE_END = "\x1b]133;B\x07";
+const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
 
 function shortPath(cwd: string, width: number): string {
 	const home = process.env.HOME;
@@ -82,6 +97,179 @@ function oneLine(parts: string[], width: number, separator: string): string {
 	return result.join(separator);
 }
 
+function ansiRgb(hex: string, text: string): string {
+	const normalized = hex.replace("#", "");
+	const r = Number.parseInt(normalized.slice(0, 2), 16);
+	const g = Number.parseInt(normalized.slice(2, 4), 16);
+	const b = Number.parseInt(normalized.slice(4, 6), 16);
+	return `\x1b[38;2;${r};${g};${b}m${text}\x1b[39m`;
+}
+
+function bold(text: string): string {
+	return `\x1b[1m${text}\x1b[22m`;
+}
+
+function centerLine(line: string, width: number): string {
+	const padding = Math.max(0, Math.floor((width - visibleWidth(line)) / 2));
+	return `${" ".repeat(padding)}${line}`;
+}
+
+function centerBlock(lines: string[], width: number): string[] {
+	return lines.map((line) => centerLine(line, width));
+}
+
+function emptyLines(count: number): string[] {
+	return Array.from({ length: Math.max(0, count) }, () => "");
+}
+
+function hasVisibleConversation(ctx: ExtensionContext): boolean {
+	return ctx.sessionManager.getEntries().some((entry) => entry.type === "message" || entry.type === "custom_message");
+}
+
+function stripShellZone(line: string): string {
+	return line
+		.replace(/\x1b\][^\x07]*\x07/g, "")
+		.replaceAll(OSC133_ZONE_START, "")
+		.replaceAll(OSC133_ZONE_END, "")
+		.replaceAll(OSC133_ZONE_FINAL, "");
+}
+
+function stripAnsi(line: string): string {
+	return stripShellZone(line).replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "");
+}
+
+function normalizeMessageBody(lines: string[]): string[] {
+	const normalized = lines
+		.map((line) => stripAnsi(line).trimEnd())
+		.map((line) => line.trim().length === 0 ? "" : line.trimStart())
+		.filter((line, index, all) => {
+			if (line.trim().length > 0) return true;
+			const hasBefore = all.slice(0, index).some((item) => item.trim().length > 0);
+			const hasAfter = all.slice(index + 1).some((item) => item.trim().length > 0);
+			return hasBefore && hasAfter;
+		});
+	return normalized.length > 0 ? normalized : [""];
+}
+
+function decorateTimelineLines(lines: string[], width: number, label: string, color: string, accent = false): string[] {
+	if (lines.length === 0) return lines;
+	const clean = normalizeMessageBody(lines);
+	const meta = `${ansiRgb("#9AA2AB", "     ")}${accent ? bold(ansiRgb(color, label)) : ansiRgb(color, label)}`;
+	const body = clean.map((line) => truncateToWidth(`  ${line}`, width, "..."));
+	return [
+		`${OSC133_ZONE_START}${truncateToWidth(meta, width, "...")}`,
+		...body,
+		`${OSC133_ZONE_END}${OSC133_ZONE_FINAL}`,
+	];
+}
+
+function installConversationRenderers(): void {
+	const userProto = UserMessageComponent.prototype as unknown as { render(width: number): string[]; __jvibeTimeline?: boolean };
+	if (!userProto.__jvibeTimeline) {
+		const originalUserRender = userProto.render;
+		userProto.render = function patchedUserRender(this: unknown, width: number): string[] {
+			return decorateTimelineLines(originalUserRender.call(this, width), width, "User", "#2F7DCE");
+		};
+		userProto.__jvibeTimeline = true;
+	}
+
+	const assistantProto = AssistantMessageComponent.prototype as unknown as { render(width: number): string[]; __jvibeTimeline?: boolean };
+	if (!assistantProto.__jvibeTimeline) {
+		const originalAssistantRender = assistantProto.render;
+		assistantProto.render = function patchedAssistantRender(this: unknown, width: number): string[] {
+			return decorateTimelineLines(originalAssistantRender.call(this, width), width, "JVibe", "#00C8D7", true);
+		};
+		assistantProto.__jvibeTimeline = true;
+	}
+
+	const toolProto = ToolExecutionComponent.prototype as unknown as { render(width: number): string[]; __jvibeTimeline?: boolean };
+	if (!toolProto.__jvibeTimeline) {
+		const originalToolRender = toolProto.render;
+		toolProto.render = function patchedToolRender(this: unknown, width: number): string[] {
+			const lines = originalToolRender.call(this, width);
+			if (lines.length === 0) return lines;
+			return lines.map((line, index) => truncateToWidth(index === 0 ? `  ${ansiRgb("#00C8D7", "->")} ${line}` : `     ${line}`, width, "..."));
+		};
+		toolProto.__jvibeTimeline = true;
+	}
+}
+
+function buildConversationHeader(ctx: ExtensionContext) {
+	return (_tui: TUI, theme: Theme): Component => ({
+		invalidate() {},
+		render(width: number): string[] {
+			if (!hasVisibleConversation(ctx)) return [];
+			const fullStatus = [
+				theme.bold(theme.fg("success", "Builder active")),
+				theme.fg("dim", "auto orchestration"),
+				`${theme.fg("accent", "Planner")} -> ${theme.fg("accent", "Builder")} -> ${theme.fg("accent", "Tester")} -> ${theme.fg("accent", "Reviewer")}`,
+			].join(theme.fg("dim", "  ·  "));
+			const compactStatus = [
+				theme.bold(theme.fg("success", "Builder active")),
+				theme.fg("dim", "auto"),
+				`${theme.fg("accent", "P")} -> ${theme.fg("accent", "B")} -> ${theme.fg("accent", "T")} -> ${theme.fg("accent", "R")}`,
+			].join(theme.fg("dim", "  ·  "));
+			const status = visibleWidth(fullStatus) + 2 <= width ? fullStatus : compactStatus;
+			const padded = ` ${status} `;
+			return [
+				"",
+				theme.fg("borderMuted", "─".repeat(width)),
+				truncateToWidth(padded, width, "..."),
+				theme.fg("borderMuted", "─".repeat(width)),
+			];
+		},
+	});
+}
+
+class JVibeWelcomeEditor extends CustomEditor {
+	constructor(tui: TUI, editorTheme: EditorTheme, keybindings: KeybindingsManager, private readonly ctx: ExtensionContext) {
+		super(tui, editorTheme, keybindings, {
+			autocompleteMaxVisible: 8,
+			paddingX: 0,
+		});
+	}
+
+	private hasConversation(): boolean {
+		return hasVisibleConversation(this.ctx);
+	}
+
+	private renderPlaceholder(width: number): string[] {
+		const lines = super.render(width);
+		if (this.getText().length > 0 || lines.length < 3) return lines;
+
+		const placeholder = ansiRgb("#6F7782", "Ask JVibe anything...");
+		const cursor = `${this.focused ? CURSOR_MARKER : ""}\x1b[7m \x1b[0m`;
+		const content = `${cursor} ${placeholder}`;
+		const padding = " ".repeat(Math.max(0, width - visibleWidth(content)));
+		lines[1] = `${content}${padding}`;
+		return lines;
+	}
+
+	render(width: number): string[] {
+		if (this.hasConversation()) return super.render(width);
+
+		const columns = Math.max(40, width);
+		const rows = Math.max(18, this.tui.terminal.rows);
+		const boxWidth = Math.min(Math.max(52, Math.floor(columns * 0.56)), Math.max(30, columns - 10));
+		const editorLines = centerBlock(this.renderPlaceholder(boxWidth), columns);
+		const title = centerLine(bold(ansiRgb("#00C8D7", "JVibe")), columns);
+		const subtitle = centerLine(ansiRgb("#6F7782", "Personal coding agent workbench"), columns);
+		const hints = centerLine(`${ansiRgb("#00C8D7", "tab")} ${ansiRgb("#6F7782", "agents")}   ${bold("/")} ${ansiRgb("#6F7782", "commands")}   ${bold("!")} ${ansiRgb("#6F7782", "bash")}`, columns);
+		const contentHeight = 5 + editorLines.length;
+		const topSpacer = Math.max(2, Math.floor((rows - contentHeight - 2) * 0.36));
+
+		return [
+			...emptyLines(topSpacer),
+			title,
+			subtitle,
+			"",
+			...editorLines,
+			"",
+			hints,
+		];
+	}
+}
+
 function buildMinimalFooter(ctx: ExtensionContext, runtime: ExtensionAPI) {
 	return (_tui: unknown, theme: Theme, footerData: FooterData): Component => {
 		return {
@@ -110,10 +298,17 @@ function buildMinimalFooter(ctx: ExtensionContext, runtime: ExtensionAPI) {
 }
 
 export default function jvibeKernel(runtime: ExtensionAPI) {
+	installConversationRenderers();
+
 	runtime.on("session_start", (_event, ctx) => {
 		if (!ctx.hasUI) return;
+		if (!hasVisibleConversation(ctx) && process.stdout.isTTY) {
+			process.stdout.write(CLEAR_VIEWPORT);
+		}
+		ctx.ui.setTheme(JVIBE_THEME_NAME);
 		ctx.ui.setTitle("JVibe");
-		ctx.ui.setHeader(() => ({ invalidate() {}, render: () => [] }));
+		ctx.ui.setHeader(buildConversationHeader(ctx));
+		ctx.ui.setEditorComponent((tui, editorTheme, keybindings) => new JVibeWelcomeEditor(tui, editorTheme, keybindings, ctx));
 		ctx.ui.setFooter(buildMinimalFooter(ctx, runtime));
 		ctx.ui.setStatus("jvibe", "auto");
 		ctx.ui.setStatus("roles", undefined);
