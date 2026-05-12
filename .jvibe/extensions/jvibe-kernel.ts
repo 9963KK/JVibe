@@ -365,16 +365,30 @@ class JVibeWelcomeEditor extends CustomEditor {
 		return hasVisibleConversation(this.ctx);
 	}
 
-	private renderPlaceholder(width: number): string[] {
-		const lines = super.render(width);
-		if (this.getText().length > 0 || lines.length < 3) return lines;
+	private renderInputBox(width: number): string[] {
+		const innerWidth = Math.max(8, width - 2);
+		const lines = super.render(innerWidth);
+		let contentLines = lines.length >= 3 ? lines.slice(1, -1) : lines;
+		if (contentLines.length === 0) contentLines = [""];
 
-		const placeholder = ansiRgb("#6F7782", "Ask JVibe anything...");
-		const cursor = `${this.focused ? CURSOR_MARKER : ""}\x1b[7m \x1b[0m`;
-		const content = `${cursor} ${placeholder}`;
-		const padding = " ".repeat(Math.max(0, width - visibleWidth(content)));
-		lines[1] = `${content}${padding}`;
-		return lines;
+		if (this.getText().length === 0) {
+			const placeholder = ansiRgb("#6F7782", "Ask JVibe anything...");
+			const cursor = `${this.focused ? CURSOR_MARKER : ""}\x1b[7m \x1b[0m`;
+			contentLines = [` ${cursor} ${placeholder}`];
+		}
+
+		const border = (text: string) => ansiRgb("#00C8D7", text);
+		const frameLine = (line: string) => {
+			const trimmed = truncateToWidth(line, innerWidth, "...");
+			const padding = " ".repeat(Math.max(0, innerWidth - visibleWidth(trimmed)));
+			return `${border("│")}${trimmed}${padding}${border("│")}`;
+		};
+
+		return [
+			border(`╭${"─".repeat(innerWidth)}╮`),
+			...contentLines.map(frameLine),
+			border(`╰${"─".repeat(innerWidth)}╯`),
+		];
 	}
 
 	render(width: number): string[] {
@@ -383,7 +397,7 @@ class JVibeWelcomeEditor extends CustomEditor {
 		const columns = Math.max(40, width);
 		const rows = Math.max(18, this.tui.terminal.rows);
 		const boxWidth = Math.min(Math.max(52, Math.floor(columns * 0.56)), Math.max(30, columns - 10));
-		const editorLines = centerBlock(this.renderPlaceholder(boxWidth), columns);
+		const editorLines = centerBlock(this.renderInputBox(boxWidth), columns);
 		const title = centerLine(bold(ansiRgb("#00C8D7", "JVibe")), columns);
 		const subtitle = centerLine(ansiRgb("#6F7782", "Personal coding agent workbench"), columns);
 		const hints = centerLine(`${ansiRgb("#00C8D7", "tab")} ${ansiRgb("#6F7782", "agents")}   ${bold("/")} ${ansiRgb("#6F7782", "commands")}   ${bold("!")} ${ansiRgb("#6F7782", "bash")}`, columns);
