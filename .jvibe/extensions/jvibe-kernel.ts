@@ -39,6 +39,11 @@ Reviewer lessons are proposals only. Do not automatically write long-term rules,
 
 const JVIBE_THEME_NAME = "jvibe-opencode-light";
 const CLEAR_VIEWPORT = "\x1b[2J\x1b[H";
+const CLEAR_SCROLLBACK = "\x1b[3J";
+const ALT_SCREEN_ENTER = "\x1b[?1049h";
+const ALT_SCREEN_EXIT = "\x1b[?1049l";
+const CURSOR_HIDE = "\x1b[?25l";
+const CURSOR_SHOW = "\x1b[?25h";
 const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
 const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
@@ -54,6 +59,8 @@ const PANEL_BORDER = "#C8D0D8";
 const ACCENT = "#00C8D7";
 const SUCCESS = "#2F9E55";
 let sidebarRenderActive = false;
+let terminalCanvasActive = false;
+let terminalCanvasExitHookInstalled = false;
 
 type RoleKey = "user" | "jvibe" | "planner" | "builder" | "tester" | "reviewer" | "subagent";
 type AgentRoleKey = Exclude<RoleKey, "user" | "subagent">;
@@ -79,6 +86,29 @@ const ROLE_SYSTEM_PROMPTS: Record<AgentRoleKey, string> = {
 	reviewer: "For this turn, behave as JVibe Reviewer: review process quality, judge deviations, and extract reusable lessons without writing long-term memory unless asked.",
 };
 let agentSwitcherOpen = false;
+
+function shouldUseTerminalCanvas(): boolean {
+	return process.stdout.isTTY === true && process.env.JVIBE_NO_ALT_SCREEN !== "1";
+}
+
+function enterTerminalCanvas(): void {
+	if (!shouldUseTerminalCanvas() || terminalCanvasActive) return;
+	process.stdout.write(`${ALT_SCREEN_ENTER}${CLEAR_VIEWPORT}${CLEAR_SCROLLBACK}${CURSOR_HIDE}`);
+	terminalCanvasActive = true;
+
+	if (!terminalCanvasExitHookInstalled) {
+		process.once("exit", () => {
+			restoreTerminalCanvas();
+		});
+		terminalCanvasExitHookInstalled = true;
+	}
+}
+
+function restoreTerminalCanvas(): void {
+	if (!terminalCanvasActive || process.stdout.isTTY !== true) return;
+	process.stdout.write(`${CURSOR_SHOW}${ALT_SCREEN_EXIT}`);
+	terminalCanvasActive = false;
+}
 
 function shortPath(cwd: string, width: number): string {
 	const home = process.env.HOME;
@@ -743,6 +773,7 @@ export default function jvibeKernel(runtime: ExtensionAPI) {
 
 	runtime.on("session_start", (_event, ctx) => {
 		if (!ctx.hasUI) return;
+		enterTerminalCanvas();
 		if (!hasVisibleConversation(ctx) && process.stdout.isTTY) {
 			process.stdout.write(CLEAR_VIEWPORT);
 		}
@@ -764,6 +795,12 @@ export default function jvibeKernel(runtime: ExtensionAPI) {
 			});
 			return { consume: true };
 		});
+	});
+
+	runtime.on("session_shutdown", (event) => {
+		if (event.reason === "quit") {
+			restoreTerminalCanvas();
+		}
 	});
 
 	runtime.on("before_agent_start", async (event) => {
