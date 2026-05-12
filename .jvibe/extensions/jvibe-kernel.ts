@@ -1,5 +1,6 @@
 import {
 	AssistantMessageComponent,
+	CustomMessageComponent,
 	CustomEditor,
 	ToolExecutionComponent,
 	UserMessageComponent,
@@ -175,6 +176,14 @@ type ToolExecutionLike = {
 	executionStarted?: boolean;
 };
 
+type CustomMessageLike = {
+	message?: {
+		customType?: string;
+		content?: string | Array<{ type?: string; text?: string }>;
+	};
+	_expanded?: boolean;
+};
+
 function stringArg(args: Record<string, unknown> | undefined, key: string): string | undefined {
 	const value = args?.[key];
 	return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
@@ -214,6 +223,51 @@ function summarizeToolExecution(tool: ToolExecutionLike): string {
 		default:
 			return `${icon} ${verb} ${shortInline(name, "tool")}`;
 	}
+}
+
+function extractCustomMessageText(message: CustomMessageLike["message"]): string {
+	const content = message?.content;
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	return content
+		.filter((item) => item.type === "text" && typeof item.text === "string")
+		.map((item) => item.text)
+		.join("\n");
+}
+
+function formatCustomType(customType: string): string {
+	if (customType.startsWith("mcp_server_")) {
+		return `mcp ${customType.replace(/^mcp_server_/, "").replaceAll("_", ".")}`;
+	}
+	return customType.replaceAll("_", ".");
+}
+
+function classifyPayload(text: string): string {
+	const trimmed = text.trim();
+	if (!trimmed) return "empty result";
+	if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+		try {
+			const parsed = JSON.parse(trimmed) as unknown;
+			if (parsed && typeof parsed === "object" && "markdown" in parsed) return "markdown result";
+			if (parsed && typeof parsed === "object" && "web" in parsed) return "web result";
+			return "JSON result";
+		}
+		catch {
+			return "structured result";
+		}
+	}
+	if (/https?:\/\//.test(trimmed)) return "web result";
+	if (trimmed.includes("\n")) return "text result";
+	return "result";
+}
+
+function summarizeCustomMessage(component: CustomMessageLike): string {
+	const customType = component.message?.customType ?? "extension";
+	const text = extractCustomMessageText(component.message);
+	const source = formatCustomType(customType);
+	const payload = classifyPayload(text);
+	const size = text.trim().length > 0 ? ` · ${text.length.toLocaleString()} chars` : "";
+	return `✓ ${source} returned ${payload}${size}`;
 }
 
 function installConversationRenderers(): void {
@@ -256,6 +310,19 @@ function installConversationRenderers(): void {
 			return [truncateToWidth(`  ${ansiRgb(color, clean.slice(0, clean.indexOf(" ") > -1 ? clean.indexOf(" ") : clean.length))}${clean.includes(" ") ? clean.slice(clean.indexOf(" ")) : ""}`, width, "...")];
 		};
 		toolProto.__jvibeTimeline = true;
+	}
+
+	const customProto = CustomMessageComponent.prototype as unknown as { render(width: number): string[]; __jvibeTimeline?: boolean };
+	if (!customProto.__jvibeTimeline) {
+		const originalCustomRender = customProto.render;
+		customProto.render = function patchedCustomRender(this: unknown, width: number): string[] {
+			const component = this as CustomMessageLike;
+			if (component._expanded) return originalCustomRender.call(this, width);
+
+			const summary = summarizeCustomMessage(component);
+			return [truncateToWidth(`  ${ansiRgb("#2F9E55", "✓")} ${summary.replace(/^✓\s*/, "")}`, width, "...")];
+		};
+		customProto.__jvibeTimeline = true;
 	}
 }
 
