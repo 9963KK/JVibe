@@ -480,7 +480,7 @@ class JVibeWelcomeEditor extends CustomEditor {
 	}
 
 	render(width: number): string[] {
-		if (this.hasConversation()) return super.render(width);
+		if (this.hasConversation()) return this.renderInputBox(width);
 
 		const columns = Math.max(40, width);
 		const rows = Math.max(18, this.tui.terminal.rows);
