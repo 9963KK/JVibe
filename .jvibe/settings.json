@@ -10,8 +10,12 @@
     "prompts"
   ],
   "skills": [
-    "../skills"
+    "../skills/source-command-jvibe-init/SKILL.md",
+    "../skills/source-command-jvibe-keepgo/SKILL.md",
+    "../skills/source-command-jvibe-pr/SKILL.md",
+    "../skills/source-command-jvibe-status/SKILL.md"
   ],
+  "quietStartup": true,
   "enableSkillCommands": true,
   "subagents": {
     "disableBuiltins": false

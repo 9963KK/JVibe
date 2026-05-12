@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import { spawnSync } from "node:child_process";
 import { Container, Spacer, Text, truncateToWidth } from "@earendil-works/pi-tui";
 
 const JVIBE_KERNEL_PROMPT = `
@@ -32,48 +33,58 @@ function shortPath(cwd: string, width: number): string {
 	return truncateToWidth(normalized, Math.max(24, width), "...");
 }
 
-function buildWorkbenchHeader(ctx: ExtensionContext) {
-	return (_tui: unknown, theme: Theme) => {
-		const width = Math.max(56, Math.min((process.stdout.columns || 96) - 4, 112));
-		const line = theme.fg("dim", "-".repeat(width));
-		const project = shortPath(ctx.cwd, Math.floor(width * 0.56));
-		const model = ctx.model?.id ?? "default";
-		const usage = ctx.getContextUsage?.();
-		const context = usage?.percent === null || usage?.percent === undefined
-			? "ctx n/a"
-			: `ctx ${Math.round(usage.percent)}%`;
+function getGitBranch(cwd: string): string {
+	const result = spawnSync("git", ["--no-optional-locks", "branch", "--show-current"], {
+		cwd,
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "ignore"],
+	});
+	const branch = result.stdout?.trim();
+	return branch || "detached";
+}
 
-		const title = [
-			theme.bold(theme.fg("accent", "JVIBE WORKBENCH")),
-			theme.fg("dim", "personal agent runtime"),
-			theme.fg("dim", "v0.1"),
-		].join("  ");
-		const runtime = [
-			`${theme.fg("muted", "proj")} ${theme.bold(project)}`,
-			`${theme.fg("muted", "model")} ${model}`,
-			`${theme.fg("muted", "ready")}`,
-			`${theme.fg("muted", context)}`,
+function formatContextUsage(ctx: ExtensionContext): string {
+	const usage = ctx.getContextUsage?.();
+	if (usage?.percent === null || usage?.percent === undefined) return "ctx: n/a";
+	return `ctx: ${Math.round(usage.percent)}%`;
+}
+
+function formatTools(runtime: ExtensionAPI): string {
+	try {
+		const tools = runtime.getActiveTools?.() ?? [];
+		return tools.length > 0 ? `tools: ${tools.length}` : "tools: auto";
+	}
+	catch {
+		return "tools: auto";
+	}
+}
+
+function buildWorkbenchHeader(ctx: ExtensionContext, runtime: ExtensionAPI) {
+	return (_tui: unknown, theme: Theme) => {
+		const width = Math.max(64, Math.min((process.stdout.columns || 96) - 2, 140));
+		const compact = width < 90;
+		const project = shortPath(ctx.cwd, compact ? 20 : Math.min(40, Math.floor(width * 0.3)));
+		const branch = getGitBranch(ctx.cwd);
+		const model = truncateToWidth(ctx.model?.id ?? "default", compact ? 16 : 28, "...");
+		const status = [
+			theme.bold(theme.fg("accent", "JVibe")),
+			theme.bold(project),
+			compact ? theme.fg("success", branch) : `${theme.fg("muted", "branch:")} ${theme.fg("success", branch)}`,
+			compact ? theme.fg("accent", model) : `${theme.fg("muted", "model:")} ${theme.fg("accent", model)}`,
+			formatContextUsage(ctx),
+			...(width >= 88 ? [formatTools(runtime)] : []),
+			...(width >= 104 ? [`${theme.fg("success", "online")} mcp: auto`] : []),
 		].join(theme.fg("dim", "  |  "));
-		const roles = [
-			`${theme.fg("muted", "roles")} ${theme.fg("accent", "Planner")} > ${theme.fg("accent", "Builder")} > ${theme.fg("accent", "Tester")} > ${theme.fg("accent", "Reviewer")}`,
-			`${theme.fg("muted", "mcp")} .mcp.json`,
-			`${theme.fg("muted", "idx")} .jvibe`,
-		].join(theme.fg("dim", "  |  "));
-		const controls = [
-			`${theme.fg("muted", "enter")} send`,
-			`${theme.fg("muted", "/")} command palette`,
-			`${theme.fg("muted", "!")} shell`,
-			`${theme.fg("muted", "ctrl+c")} interrupt`,
-		].join(theme.fg("dim", "  |  "));
+
+		const flowItems = width < 90
+			? [theme.fg("success", "Builder active"), "auto orchestration"]
+			: [theme.fg("success", "Builder active"), "auto orchestration", "Planner -> Builder -> Tester -> Reviewer"];
+		const flow = flowItems.join(theme.fg("dim", "  ·  "));
 
 		const box = new Container();
 		box.addChild(new Spacer(1));
-		box.addChild(new Text(line, 1, 0));
-		box.addChild(new Text(truncateToWidth(title, width, ""), 1, 0));
-		box.addChild(new Text(truncateToWidth(runtime, width, ""), 1, 0));
-		box.addChild(new Text(truncateToWidth(roles, width, ""), 1, 0));
-		box.addChild(new Text(truncateToWidth(controls, width, ""), 1, 0));
-		box.addChild(new Text(line, 1, 0));
+		box.addChild(new Text(status, 1, 0));
+		box.addChild(new Text(flow, 1, 0));
 		box.addChild(new Spacer(1));
 		return box;
 	};
@@ -82,11 +93,11 @@ function buildWorkbenchHeader(ctx: ExtensionContext) {
 export default function jvibeKernel(runtime: ExtensionAPI) {
 	runtime.on("session_start", (_event, ctx) => {
 		if (!ctx.hasUI) return;
-		ctx.ui.setTitle("JVibe Workbench");
-		ctx.ui.setHeader(buildWorkbenchHeader(ctx));
-		ctx.ui.setStatus("jvibe", "JVibe Workbench");
-		ctx.ui.setStatus("roles", "Planner/Builder/Tester/Reviewer");
-		ctx.ui.setWorkingMessage("JVibe is working");
+		ctx.ui.setTitle("JVibe");
+		ctx.ui.setHeader(buildWorkbenchHeader(ctx, runtime));
+		ctx.ui.setStatus("jvibe", "auto");
+		ctx.ui.setStatus("roles", undefined);
+		ctx.ui.setWorkingMessage("Working");
 	});
 
 	runtime.on("before_agent_start", async (event) => {
