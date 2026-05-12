@@ -45,6 +45,7 @@ const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
 const WIDE_LAYOUT_COLUMNS = 120;
 const SIDEBAR_WIDTH = 42;
 const SIDEBAR_GAP = 4;
+const COMPOSER_BOTTOM_PADDING = 2;
 const PROMPT_BG = "#F3F5F7";
 const TEXT = "#252A31";
 const MUTED = "#6F7782";
@@ -171,6 +172,33 @@ function composeSidebarRows(left: string[], right: string[], leftWidth: number, 
 	});
 }
 
+function findComposerStart(lines: string[]): number {
+	const markerIndex = lines.findLastIndex((line) => {
+		const clean = stripAnsi(line);
+		return clean.includes("Ask JVibe anything") || clean.includes("ctrl+p") || clean.includes("commands");
+	});
+	if (markerIndex === -1) return -1;
+
+	for (let index = markerIndex; index >= 0; index--) {
+		if (stripAnsi(lines[index]).includes("┌")) return index;
+	}
+	return markerIndex;
+}
+
+function pinComposerToBottom(lines: string[], terminalRows: number): string[] {
+	const composerStart = findComposerStart(lines);
+	if (composerStart === -1 || terminalRows <= 0) return lines;
+
+	const spacerCount = Math.max(0, terminalRows - lines.length - COMPOSER_BOTTOM_PADDING);
+	if (spacerCount === 0) return lines;
+
+	return [
+		...lines.slice(0, composerStart),
+		...emptyLines(spacerCount),
+		...lines.slice(composerStart),
+	];
+}
+
 function installSidebarRenderer(tui: TUI, state: NonNullable<SidebarTUI["__jvibeSidebarState"]>): void {
 	const patchable = tui as SidebarTUI;
 	patchable.__jvibeSidebarState = state;
@@ -186,7 +214,8 @@ function installSidebarRenderer(tui: TUI, state: NonNullable<SidebarTUI["__jvibe
 		const leftWidth = mainContentWidth(width);
 		sidebarRenderActive = true;
 		try {
-			const left = originalRender(leftWidth);
+			const rows = (patchable as { terminal?: { rows?: number } }).terminal?.rows ?? 0;
+			const left = pinComposerToBottom(originalRender(leftWidth), rows);
 			const right = renderSessionPanel(current.ctx, current.runtime, current.getStatusSnapshot(), SIDEBAR_WIDTH);
 			return composeSidebarRows(left, right, leftWidth, SIDEBAR_GAP);
 		}
