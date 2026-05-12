@@ -3,22 +3,22 @@
   "name": "jvibe-opencode-light",
   "vars": {
     "cyan": "#00C8D7",
-    "cyanSoft": "#DDF8FA",
-    "charcoal": "#252A31",
-    "slate": "#58616D",
-    "muted": "#6F7782",
-    "dim": "#9AA2AB",
-    "hairline": "#E4E8EC",
-    "border": "#D7DDE3",
-    "panel": "#F3F5F7",
-    "panelSoft": "#F8FAFB",
-    "selected": "#EAF0F4",
+    "cyanSoft": "#163B44",
+    "charcoal": "#E9EDF5",
+    "slate": "#A5ADBC",
+    "muted": "#8D96A8",
+    "dim": "#687386",
+    "hairline": "#394255",
+    "border": "#59647A",
+    "panel": "#202638",
+    "panelSoft": "#252D3D",
+    "selected": "#30394A",
     "green": "#2F9E55",
-    "greenSoft": "#EAF7EE",
+    "greenSoft": "#173321",
     "red": "#D24B45",
-    "redSoft": "#FCEDEE",
+    "redSoft": "#3A2025",
     "amber": "#A66A00",
-    "amberSoft": "#FFF4D8",
+    "amberSoft": "#3A2D17",
     "blue": "#2F7DCE"
   },
   "colors": {
@@ -81,8 +81,8 @@
     "bashMode": "green"
   },
   "export": {
-    "pageBg": "#FFFFFF",
-    "cardBg": "#F3F5F7",
-    "infoBg": "#FFF4D8"
+    "pageBg": "#1F2433",
+    "cardBg": "#202638",
+    "infoBg": "#3A2D17"
   }
 }
