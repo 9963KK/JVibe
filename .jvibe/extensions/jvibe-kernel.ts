@@ -50,6 +50,7 @@ const PROMPT_BG = "#F3F5F7";
 const TEXT = "#252A31";
 const MUTED = "#6F7782";
 const DIM = "#9AA2AB";
+const PANEL_BORDER = "#C8D0D8";
 const ACCENT = "#00C8D7";
 const SUCCESS = "#2F9E55";
 let sidebarRenderActive = false;
@@ -159,7 +160,6 @@ function renderSessionPanel(ctx: ExtensionContext, runtime: ExtensionAPI, snapsh
 	const branch = stripAnsi(snapshot.branch || "unknown");
 	const project = shortPath(ctx.cwd, Math.max(10, innerWidth - 9));
 	const context = formatContextUsage(ctx).replace(/^ctx:\s*/, "");
-	const rail = ansiRgb("#E4E8EC", "│");
 	const section = (text: string) => bold(ansiRgb(TEXT, text));
 	const label = (text: string) => ansiRgb(MUTED, text);
 	const value = (text: string) => ansiRgb(TEXT, text);
@@ -167,7 +167,7 @@ function renderSessionPanel(ctx: ExtensionContext, runtime: ExtensionAPI, snapsh
 	const line = (content = "") => {
 		const trimmed = truncateToWidth(content, innerWidth, "...");
 		const padding = " ".repeat(Math.max(0, innerWidth - visibleWidth(trimmed)));
-		return `${rail}  ${trimmed}${padding}`;
+		return `  ${trimmed}${padding}`;
 	};
 
 	if (compact) {
@@ -212,10 +212,11 @@ type SidebarTUI = TUI & {
 
 function composeSidebarRows(left: string[], right: string[], leftWidth: number, gap: number): string[] {
 	const rowCount = Math.max(left.length, right.length);
+	const rail = ansiRgb(PANEL_BORDER, "│");
 	return Array.from({ length: rowCount }, (_, index) => {
 		const leftLine = truncateToWidth(left[index] ?? "", leftWidth, "");
 		const rightLine = right[index] ?? "";
-		return `${padToWidth(leftLine, leftWidth)}${" ".repeat(gap)}${rightLine}`;
+		return `${padToWidth(leftLine, leftWidth)}${" ".repeat(gap)}${rail}${rightLine}`;
 	});
 }
 
@@ -542,29 +543,12 @@ function installConversationRenderers(): void {
 }
 
 function buildConversationHeader(ctx: ExtensionContext, runtime: ExtensionAPI, getStatusSnapshot: () => WelcomeStatusSnapshot) {
-	return (tui: TUI, theme: Theme): Component => {
+	return (tui: TUI, _theme: Theme): Component => {
 		installSidebarRenderer(tui, { ctx, runtime, getStatusSnapshot });
 		return ({
 		invalidate() {},
-		render(width: number): string[] {
-			if (!hasVisibleConversation(ctx)) return [];
-			const fullStatus = [
-				theme.bold(theme.fg("success", `${ROLE_BADGES.builder.icon} Builder active`)),
-				theme.fg("dim", "auto orchestration"),
-				`${theme.fg("warning", `${ROLE_BADGES.planner.icon} Planner`)} -> ${theme.fg("success", `${ROLE_BADGES.builder.icon} Builder`)} -> ${theme.fg("accent", `${ROLE_BADGES.tester.icon} Tester`)} -> ${theme.fg("muted", `${ROLE_BADGES.reviewer.icon} Reviewer`)}`,
-			].join(theme.fg("dim", "  ·  "));
-			const compactStatus = [
-				theme.bold(theme.fg("success", `${ROLE_BADGES.builder.icon} Builder`)),
-				theme.fg("dim", "auto"),
-				`${theme.fg("warning", ROLE_BADGES.planner.icon)} -> ${theme.fg("success", ROLE_BADGES.builder.icon)} -> ${theme.fg("accent", ROLE_BADGES.tester.icon)} -> ${theme.fg("muted", ROLE_BADGES.reviewer.icon)}`,
-			].join(theme.fg("dim", "  ·  "));
-			const status = visibleWidth(fullStatus) + 2 <= width ? fullStatus : compactStatus;
-			const padded = ` ${status} `;
-			return [
-				"",
-				truncateToWidth(padded, width, "..."),
-				theme.fg("borderMuted", "─".repeat(width)),
-			];
+		render(): string[] {
+			return [];
 		},
 	});
 	};
