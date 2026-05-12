@@ -56,6 +56,8 @@ const SUCCESS = "#2F9E55";
 let sidebarRenderActive = false;
 
 type RoleKey = "user" | "jvibe" | "planner" | "builder" | "tester" | "reviewer" | "subagent";
+type AgentRoleKey = Exclude<RoleKey, "user" | "subagent">;
+let activeAgentRole: AgentRoleKey = "jvibe";
 
 const ROLE_BADGES: Record<RoleKey, { label: string; icon: string; color: string }> = {
 	user: { label: "User", icon: "●", color: "#2F7DCE" },
@@ -66,6 +68,17 @@ const ROLE_BADGES: Record<RoleKey, { label: string; icon: string; color: string 
 	reviewer: { label: "Reviewer", icon: "◈", color: "#8A5CF6" },
 	subagent: { label: "Subagent", icon: "◆", color: ACCENT },
 };
+
+const AGENT_ROLES: AgentRoleKey[] = ["jvibe", "planner", "builder", "tester", "reviewer"];
+
+const ROLE_SYSTEM_PROMPTS: Record<AgentRoleKey, string> = {
+	jvibe: "",
+	planner: "For this turn, behave as JVibe Planner: clarify the goal, decompose work, define work packages and acceptance criteria. Do not implement unless the user explicitly asks you to continue.",
+	builder: "For this turn, behave as JVibe Builder: execute the requested work directly, keep scope tight, report blockers and meaningful deviations.",
+	tester: "For this turn, behave as JVibe Tester: verify completion against the request and plan, classify the result as pass, partial, fail, or deviated, and identify concrete evidence.",
+	reviewer: "For this turn, behave as JVibe Reviewer: review process quality, judge deviations, and extract reusable lessons without writing long-term memory unless asked.",
+};
+let agentSwitcherOpen = false;
 
 function shortPath(cwd: string, width: number): string {
 	const home = process.env.HOME;
@@ -103,6 +116,17 @@ function roleBadge(role: RoleKey, colorOverride?: string): string {
 	return `${ansiRgb(color, badge.icon)} ${ansiRgb(color, badge.label)}`;
 }
 
+function roleOption(role: AgentRoleKey): string {
+	const badge = ROLE_BADGES[role];
+	const suffix = role === activeAgentRole ? " active" : "";
+	return `${badge.icon} ${badge.label}${suffix}`;
+}
+
+function parseRoleOption(option: string | undefined): AgentRoleKey | undefined {
+	if (!option) return undefined;
+	return AGENT_ROLES.find((role) => option.toLowerCase().includes(ROLE_BADGES[role].label.toLowerCase()));
+}
+
 function roleLabel(label: string): string {
 	const role = roleFromText(label) ?? "subagent";
 	return `${ROLE_BADGES[role].icon} ${label}`;
@@ -118,6 +142,14 @@ function roleFromArgs(args: Record<string, unknown> | undefined): RoleKey | unde
 		if (role) return role;
 	}
 	return undefined;
+}
+
+async function showAgentSwitcher(ctx: ExtensionContext): Promise<void> {
+	const selected = await ctx.ui.select("Switch Agent", AGENT_ROLES.map(roleOption));
+	const role = parseRoleOption(selected);
+	if (!role) return;
+	activeAgentRole = role;
+	ctx.ui.setStatus("agent", `${ROLE_BADGES[role].label} active`);
 }
 
 function formatContextUsage(ctx: ExtensionContext): string {
@@ -187,7 +219,7 @@ function renderSessionPanel(ctx: ExtensionContext, runtime: ExtensionAPI, snapsh
 		line(label(`${tools} tools`)),
 		line(),
 		line(section("Agent")),
-		line(`${roleBadge("jvibe")} ${label("active")}`),
+		line(`${roleBadge(activeAgentRole)} ${label("active")}`),
 		line(),
 		line(section("MCP")),
 		line(bullet(mcp.includes("0/") ? DIM : SUCCESS, label(mcp))),
@@ -321,6 +353,10 @@ function centerLine(line: string, width: number): string {
 
 function centerBlock(lines: string[], width: number): string[] {
 	return lines.map((line) => centerLine(line, width));
+}
+
+function leftBlock(lines: string[], width: number): string[] {
+	return lines.map((line) => truncateToWidth(line, width, "..."));
 }
 
 function emptyLines(count: number): string[] {
@@ -594,13 +630,13 @@ class JVibeWelcomeEditor extends CustomEditor {
 		const branch = stripAnsi(snapshot.branch || "main");
 		const model = truncateToWidth(this.ctx.model?.id ?? "unknown", Math.max(10, Math.floor(innerWidth * 0.36)), "...");
 		const leftMeta = [
-			ansiRgb(ACCENT, "JVibe"),
+			roleBadge(activeAgentRole),
 			ansiRgb(TEXT, model),
 			ansiRgb(MUTED, "Ollama Cloud"),
 		].join(ansiRgb(DIM, "  ·  "));
 		const rightMeta = [
 			ansiRgb(TEXT, "tab"),
-			ansiRgb(MUTED, "agents"),
+			ansiRgb(MUTED, "agent"),
 			ansiRgb(TEXT, "ctrl+p"),
 			ansiRgb(MUTED, "commands"),
 		].join(" ");
@@ -622,14 +658,15 @@ class JVibeWelcomeEditor extends CustomEditor {
 	}
 
 	private composeColumns(left: string[], right: string[], width: number, gap: number): string[] {
-		const contentWidth = width + gap + visibleWidth(stripAnsi(right[0] ?? ""));
-		const leftPad = Math.max(0, Math.floor((this.tui.terminal.columns - contentWidth) / 2));
+		const rail = ansiRgb(PANEL_BORDER, "│");
+		const contentWidth = width + gap + 1 + visibleWidth(stripAnsi(right[0] ?? ""));
+		const leftPad = Math.max(2, Math.floor((this.tui.terminal.columns - contentWidth) / 2));
 		const rowCount = Math.max(left.length, right.length);
 		return Array.from({ length: rowCount }, (_, index) => {
 			const leftLine = left[index] ?? "";
 			const rightLine = right[index] ?? "";
 			const leftPadding = " ".repeat(Math.max(0, width - visibleWidth(leftLine)));
-			return `${" ".repeat(leftPad)}${leftLine}${leftPadding}${" ".repeat(gap)}${rightLine}`;
+			return `${" ".repeat(leftPad)}${leftLine}${leftPadding}${" ".repeat(gap)}${rail}${rightLine}`;
 		});
 	}
 
@@ -639,23 +676,28 @@ class JVibeWelcomeEditor extends CustomEditor {
 		const columns = Math.max(40, width);
 		const rows = Math.max(18, this.tui.terminal.rows);
 		const showPanel = columns >= 112;
-		const panelWidth = showPanel ? Math.min(36, Math.max(30, Math.floor(columns * 0.22))) : 0;
-		const gap = showPanel ? 5 : 0;
-		const maxMainWidth = showPanel ? columns - panelWidth - gap - 8 : columns - 10;
-		const boxWidth = Math.min(Math.max(52, Math.floor(columns * 0.52)), Math.max(30, maxMainWidth));
+		const panelWidth = showPanel ? Math.min(38, Math.max(32, Math.floor(columns * 0.23))) : 0;
+		const gap = showPanel ? 4 : 0;
+		const maxMainWidth = showPanel ? columns - panelWidth - gap - 10 : columns - 10;
+		const boxWidth = Math.min(Math.max(76, Math.floor(maxMainWidth * 0.94)), Math.max(30, maxMainWidth));
+		const agent = ROLE_BADGES[activeAgentRole];
+		const brand = `${bold(ansiRgb(ACCENT, "JVibe"))} ${ansiRgb(DIM, "Personal coding agent workbench")}`;
+		const activeLine = `${roleBadge(activeAgentRole)} ${ansiRgb(MUTED, "ready")} ${ansiRgb(DIM, "·")} ${ansiRgb(MUTED, "workspace aware")}`;
 		const mainLines = [
-			centerLine(bold(ansiRgb("#00C8D7", "JVibe")), boxWidth),
-			centerLine(ansiRgb("#6F7782", "Personal coding agent workbench"), boxWidth),
+			brand,
+			ansiRgb(MUTED, `Active ${agent.label} · ask, build, test, or review from this workspace`),
+			ansiRgb(PANEL_BORDER, "─".repeat(boxWidth)),
 			"",
 			...this.renderInputBox(boxWidth),
 			"",
-			centerLine(`${ansiRgb("#00C8D7", "tab")} ${ansiRgb("#6F7782", "agents")}   ${bold("/")} ${ansiRgb("#6F7782", "commands")}   ${bold("!")} ${ansiRgb("#6F7782", "bash")}`, boxWidth),
+			activeLine,
+			`${ansiRgb(ACCENT, "tab")} ${ansiRgb(MUTED, "switch agent")}   ${bold("/")} ${ansiRgb(MUTED, "commands")}   ${bold("!")} ${ansiRgb(MUTED, "bash")}`,
 		];
 		const contentLines = showPanel
 			? this.composeColumns(mainLines, this.renderStatusPanel(panelWidth), boxWidth, gap)
-			: centerBlock(mainLines, columns);
+			: centerBlock(leftBlock(mainLines, boxWidth), columns);
 		const contentHeight = contentLines.length;
-		const topSpacer = Math.max(2, Math.floor((rows - contentHeight - 2) * 0.36));
+		const topSpacer = Math.max(3, Math.floor((rows - contentHeight - 2) * 0.28));
 
 		return [
 			...emptyLines(topSpacer),
@@ -712,6 +754,16 @@ export default function jvibeKernel(runtime: ExtensionAPI) {
 		ctx.ui.setStatus("jvibe", "auto");
 		ctx.ui.setStatus("roles", undefined);
 		ctx.ui.setWorkingMessage("Working");
+		ctx.ui.onTerminalInput((data) => {
+			if (data !== "\t") return undefined;
+			if (agentSwitcherOpen) return { consume: true };
+
+			agentSwitcherOpen = true;
+			void showAgentSwitcher(ctx).finally(() => {
+				agentSwitcherOpen = false;
+			});
+			return { consume: true };
+		});
 	});
 
 	runtime.on("before_agent_start", async (event) => {
@@ -720,8 +772,9 @@ export default function jvibeKernel(runtime: ExtensionAPI) {
 			return undefined;
 		}
 
+		const rolePrompt = ROLE_SYSTEM_PROMPTS[activeAgentRole];
 		return {
-			systemPrompt: `${event.systemPrompt}\n\n${JVIBE_KERNEL_PROMPT}`,
+			systemPrompt: `${event.systemPrompt}\n\n${JVIBE_KERNEL_PROMPT}${rolePrompt ? `\n\n## Active JVibe Agent Role\n\n${rolePrompt}` : ""}`,
 		};
 	});
 }
