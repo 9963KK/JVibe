@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
-import { spawnSync } from "node:child_process";
-import { Container, Spacer, Text, truncateToWidth } from "@earendil-works/pi-tui";
+import type { Component } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 const JVIBE_KERNEL_PROMPT = `
 ## JVibe Kernel Orchestration
@@ -30,17 +30,7 @@ Reviewer lessons are proposals only. Do not automatically write long-term rules,
 function shortPath(cwd: string, width: number): string {
 	const home = process.env.HOME;
 	const normalized = home && cwd.startsWith(home) ? `~${cwd.slice(home.length)}` : cwd;
-	return truncateToWidth(normalized, Math.max(24, width), "...");
-}
-
-function getGitBranch(cwd: string): string {
-	const result = spawnSync("git", ["--no-optional-locks", "branch", "--show-current"], {
-		cwd,
-		encoding: "utf8",
-		stdio: ["ignore", "pipe", "ignore"],
-	});
-	const branch = result.stdout?.trim();
-	return branch || "detached";
+	return truncateToWidth(normalized, Math.max(12, width), "...");
 }
 
 function formatContextUsage(ctx: ExtensionContext): string {
@@ -49,44 +39,73 @@ function formatContextUsage(ctx: ExtensionContext): string {
 	return `ctx: ${Math.round(usage.percent)}%`;
 }
 
-function formatTools(runtime: ExtensionAPI): string {
+function formatTools(runtime: ExtensionAPI): string | undefined {
 	try {
 		const tools = runtime.getActiveTools?.() ?? [];
-		return tools.length > 0 ? `tools: ${tools.length}` : "tools: auto";
+		return tools.length > 0 ? `tools ${tools.length}` : undefined;
 	}
 	catch {
-		return "tools: auto";
+		return undefined;
 	}
 }
 
-function buildWorkbenchHeader(ctx: ExtensionContext, runtime: ExtensionAPI) {
-	return (_tui: unknown, theme: Theme) => {
-		const width = Math.max(64, Math.min((process.stdout.columns || 96) - 2, 140));
-		const compact = width < 90;
-		const project = shortPath(ctx.cwd, compact ? 20 : Math.min(40, Math.floor(width * 0.3)));
-		const branch = getGitBranch(ctx.cwd);
-		const model = truncateToWidth(ctx.model?.id ?? "default", compact ? 16 : 28, "...");
-		const status = [
-			theme.bold(theme.fg("accent", "JVibe")),
-			theme.bold(project),
-			compact ? theme.fg("success", branch) : `${theme.fg("muted", "branch:")} ${theme.fg("success", branch)}`,
-			compact ? theme.fg("accent", model) : `${theme.fg("muted", "model:")} ${theme.fg("accent", model)}`,
-			formatContextUsage(ctx),
-			...(width >= 88 ? [formatTools(runtime)] : []),
-			...(width >= 104 ? [`${theme.fg("success", "online")} mcp: auto`] : []),
-		].join(theme.fg("dim", "  |  "));
+type FooterData = {
+	getGitBranch(): string | null;
+	getExtensionStatuses(): ReadonlyMap<string, string>;
+};
 
-		const flowItems = width < 90
-			? [theme.fg("success", "Builder active"), "auto orchestration"]
-			: [theme.fg("success", "Builder active"), "auto orchestration", "Planner -> Builder -> Tester -> Reviewer"];
-		const flow = flowItems.join(theme.fg("dim", "  ·  "));
+function getMcpStatus(footerData: FooterData): string | undefined {
+	const mcpStatus = Array.from(footerData.getExtensionStatuses().values()).find((status) => status.includes("MCP:"));
+	if (!mcpStatus) return undefined;
+	return mcpStatus.replace(/^MCP:\s*/i, "mcp ");
+}
 
-		const box = new Container();
-		box.addChild(new Spacer(1));
-		box.addChild(new Text(status, 1, 0));
-		box.addChild(new Text(flow, 1, 0));
-		box.addChild(new Spacer(1));
-		return box;
+function oneLine(parts: string[], width: number, separator: string): string {
+	const visibleSeparatorWidth = visibleWidth(separator);
+	const result: string[] = [];
+	let remaining = width;
+	for (const part of parts) {
+		const separatorWidth = result.length === 0 ? 0 : visibleSeparatorWidth;
+		const partWidth = visibleWidth(part);
+		if (separatorWidth + partWidth <= remaining) {
+			result.push(part);
+			remaining -= separatorWidth + partWidth;
+			continue;
+		}
+
+		const available = remaining - separatorWidth;
+		if (available > 8) {
+			result.push(truncateToWidth(part, available, "..."));
+		}
+		break;
+	}
+	return result.join(separator);
+}
+
+function buildMinimalFooter(ctx: ExtensionContext, runtime: ExtensionAPI) {
+	return (_tui: unknown, theme: Theme, footerData: FooterData): Component => {
+		return {
+			invalidate() {},
+			render(width: number): string[] {
+				const compact = width < 90;
+				const project = shortPath(ctx.cwd, compact ? 24 : 36);
+				const branch = footerData.getGitBranch();
+				const model = truncateToWidth(ctx.model?.id ?? "unknown", compact ? 18 : 30, "...");
+				const tools = formatTools(runtime);
+				const mcp = getMcpStatus(footerData);
+				const parts = [
+					theme.bold(theme.fg("accent", "jvibe")),
+					theme.bold(project),
+					...(branch ? [theme.fg("success", branch)] : []),
+					theme.fg("accent", model),
+					formatContextUsage(ctx),
+					...(tools ? [tools] : []),
+					...(mcp && !compact ? [theme.fg("accent", mcp)] : []),
+					"auto",
+				];
+				return [oneLine(parts, width, theme.fg("dim", "  ·  "))];
+			},
+		};
 	};
 }
 
@@ -94,7 +113,8 @@ export default function jvibeKernel(runtime: ExtensionAPI) {
 	runtime.on("session_start", (_event, ctx) => {
 		if (!ctx.hasUI) return;
 		ctx.ui.setTitle("JVibe");
-		ctx.ui.setHeader(buildWorkbenchHeader(ctx, runtime));
+		ctx.ui.setHeader(() => ({ invalidate() {}, render: () => [] }));
+		ctx.ui.setFooter(buildMinimalFooter(ctx, runtime));
 		ctx.ui.setStatus("jvibe", "auto");
 		ctx.ui.setStatus("roles", undefined);
 		ctx.ui.setWorkingMessage("Working");
