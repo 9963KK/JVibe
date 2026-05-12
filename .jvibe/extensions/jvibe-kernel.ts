@@ -163,6 +163,59 @@ function decorateTimelineLines(lines: string[], width: number, label: string, co
 	];
 }
 
+type ToolExecutionLike = {
+	toolName?: string;
+	args?: Record<string, unknown>;
+	result?: {
+		content?: Array<{ type: string; text?: string }>;
+		isError?: boolean;
+		details?: unknown;
+	};
+	isPartial?: boolean;
+	executionStarted?: boolean;
+};
+
+function stringArg(args: Record<string, unknown> | undefined, key: string): string | undefined {
+	const value = args?.[key];
+	return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function shortInline(text: string | undefined, fallback: string, maxWidth = 58): string {
+	if (!text) return fallback;
+	return truncateToWidth(text.replace(/\s+/g, " "), maxWidth, "...");
+}
+
+function summarizeToolExecution(tool: ToolExecutionLike): string {
+	const name = tool.toolName ?? "tool";
+	const args = tool.args;
+	const path = stringArg(args, "path") ?? stringArg(args, "file") ?? stringArg(args, "filePath");
+	const pattern = stringArg(args, "pattern") ?? stringArg(args, "query");
+	const command = stringArg(args, "command") ?? stringArg(args, "cmd");
+	const failed = tool.result?.isError === true;
+	const pending = tool.isPartial === true || (tool.executionStarted === true && !tool.result);
+	const icon = failed ? "!" : pending ? "->" : "✓";
+	const verb = failed ? "failed" : pending ? "using" : "used";
+
+	switch (name) {
+		case "read":
+			return `${icon} read ${shortInline(path, "file")}`;
+		case "write":
+			return `${icon} wrote ${shortInline(path, "file")}`;
+		case "edit":
+			return `${icon} edited ${shortInline(path, "file")}`;
+		case "bash":
+			return `${icon} ran ${shortInline(command, "command")}`;
+		case "grep":
+			return `${icon} searched ${shortInline(pattern, "pattern")}${path ? ` in ${shortInline(path, "path", 28)}` : ""}`;
+		case "find":
+			return `${icon} found ${shortInline(pattern, path ?? "files")}`;
+		case "ls":
+			return `${icon} listed ${shortInline(path, "directory")}`;
+		default:
+			return `${icon} ${verb} ${shortInline(name, "tool")}`;
+	}
+}
+
 function installConversationRenderers(): void {
 	const userProto = UserMessageComponent.prototype as unknown as { render(width: number): string[]; __jvibeTimeline?: boolean };
 	if (!userProto.__jvibeTimeline) {
@@ -173,9 +226,21 @@ function installConversationRenderers(): void {
 		userProto.__jvibeTimeline = true;
 	}
 
-	const assistantProto = AssistantMessageComponent.prototype as unknown as { render(width: number): string[]; __jvibeTimeline?: boolean };
+	const assistantProto = AssistantMessageComponent.prototype as unknown as {
+		render(width: number): string[];
+		updateContent(message: { content?: Array<{ type?: string }> }): void;
+		__jvibeTimeline?: boolean;
+	};
 	if (!assistantProto.__jvibeTimeline) {
 		const originalAssistantRender = assistantProto.render;
+		const originalUpdateContent = assistantProto.updateContent;
+		assistantProto.updateContent = function patchedAssistantUpdateContent(this: unknown, message: { content?: Array<{ type?: string }> }): void {
+			const filteredMessage = {
+				...message,
+				content: message.content?.filter((content) => content.type !== "thinking") ?? [],
+			};
+			originalUpdateContent.call(this, filteredMessage);
+		};
 		assistantProto.render = function patchedAssistantRender(this: unknown, width: number): string[] {
 			return decorateTimelineLines(originalAssistantRender.call(this, width), width, "JVibe", "#00C8D7", true);
 		};
@@ -184,11 +249,11 @@ function installConversationRenderers(): void {
 
 	const toolProto = ToolExecutionComponent.prototype as unknown as { render(width: number): string[]; __jvibeTimeline?: boolean };
 	if (!toolProto.__jvibeTimeline) {
-		const originalToolRender = toolProto.render;
 		toolProto.render = function patchedToolRender(this: unknown, width: number): string[] {
-			const lines = originalToolRender.call(this, width);
-			if (lines.length === 0) return lines;
-			return lines.map((line, index) => truncateToWidth(index === 0 ? `  ${ansiRgb("#00C8D7", "->")} ${line}` : `     ${line}`, width, "..."));
+			const summary = summarizeToolExecution(this as ToolExecutionLike);
+			const clean = stripAnsi(summary);
+			const color = clean.startsWith("!") ? "#D24B45" : clean.startsWith("✓") ? "#2F9E55" : "#00C8D7";
+			return [truncateToWidth(`  ${ansiRgb(color, clean.slice(0, clean.indexOf(" ") > -1 ? clean.indexOf(" ") : clean.length))}${clean.includes(" ") ? clean.slice(clean.indexOf(" ")) : ""}`, width, "...")];
 		};
 		toolProto.__jvibeTimeline = true;
 	}
